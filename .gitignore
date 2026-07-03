@@ -1,4 +1,32 @@
+# Базы данных
 *.db
+*.sqlite
+*.sqlite3
+
+# Временные файлы
 tmp/
+*.tmp
+*.bak
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+.venv/
+venv/
+.env
+
+# Секреты — НИКОГДА не коммитить
+.env
+*.secret
+secrets.json
+credentials.json
+
+# Статичные данные сервера (генерируются на сервере)
+data.json
+russia_topo.json
+*.geojson
+*.topojson
+
+# Идеи и черновики
+*.draft

@@ -3,177 +3,396 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Дизель-лимиты</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.9/dist/leaflet.js"></script>
-<script src="https://unpkg.com/topojson-client@3"></script>
+<meta name="description" content="Интерактивная карта ограничений и цен на дизельное топливо по регионам России. Статусы: ЧС, жёсткие лимиты, лимиты, нет данных.">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="dark">
+<title>Дизель-лимиты — карта ограничений по регионам России</title>
+
+<!-- Leaflet 1.9.4 (pinned) с SRI -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H"
+      crossorigin="anonymous" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH"
+        crossorigin="anonymous"></script>
+<script src="https://unpkg.com/topojson-client@3.0.0/dist/topojson.min.js"
+        integrity="sha384-TizpRMwVYyz/PXkrVvltINtyaZsh6kj4Xtq1mKWvdve/87SQjVA00GWiAH/SEHCo"
+        crossorigin="anonymous"></script>
+
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:system-ui,sans-serif;background:#0d1117;color:#c9d1d9}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#0d1117;color:#c9d1d9}
 #map{height:65vh;width:100%}
 header{display:flex;justify-content:space-between;align-items:center;padding:8px 16px;background:#161b22;border-bottom:1px solid #30363d;font-size:14px;flex-wrap:wrap;gap:4px}
 header h1{font-size:16px;font-weight:600;color:#f0f6fc}
+header h1 .emoji{margin-right:4px}
 header span#stat{color:#8b949e;font-size:12px}
+
 .leaflet-popup-content-wrapper{background:#161b22;color:#c9d1d9;border-radius:8px;max-height:40vh;overflow-y:auto}
 .leaflet-popup-tip{background:#161b22}
 .popup h3{font-size:14px;margin-bottom:4px;color:#f0f6fc}
 .popup .severity{font-size:13px;padding:2px 8px;border-radius:4px;display:inline-block;margin:4px 0}
-.sev-danger{background:#5c0000;color:#ff8888}
-.sev-warn{background:#5a4e00;color:#ffd700}
-.sev-ok{background:#0a4420;color:#3fb950}
+.sev-emergency{background:#5c0000;color:#ffaaaa}
+.sev-strict{background:#7a1f1f;color:#ffcccc}
+.sev-warn{background:#5a4e00;color:#ffe680}
+.sev-ok{background:#0a4420;color:#86efac}
 .popup .price{font-size:18px;font-weight:700;color:#58a6ff;margin:4px 0}
 .popup .restrictions{margin-top:6px;font-size:12px}
 .popup .restrictions li{list-style:none;padding:3px 0;border-bottom:1px solid #21262d}
 .popup .restrictions li:last-child{border:none}
+.popup .restrictions .client{font-size:11px;color:#8b949e}
+.popup .restrictions a,.news-item a{color:#58a6ff;text-decoration:none}
+.popup .restrictions a:hover,.news-item a:hover{text-decoration:underline}
+.popup .restrictions a:focus-visible,.news-item a:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
+
 .leaflet-control-zoom a{background:#161b22!important;color:#c9d1d9!important;border-color:#30363d!important}
-.leaflet-control-attribution{display:none!important}
+.leaflet-control-zoom a:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
+/* Атрибуция Leaflet/CartoDB — обязательна по лицензии */
+.leaflet-control-attribution{background:#161b22!important;color:#8b949e!important;font-size:10px}
+.leaflet-control-attribution a{color:#58a6ff!important}
+
+/* Легенда карты */
+.legend{background:rgba(22,27,34,0.96);color:#c9d1d9;padding:8px 12px;border-radius:6px;border:1px solid #30363d;box-shadow:0 2px 8px rgba(0,0,0,0.4);font-size:12px;line-height:1.6}
+.legend h3{font-size:12px;font-weight:600;color:#f0f6fc;margin-bottom:6px}
+.legend-row{display:flex;align-items:center;gap:6px}
+.legend-row .sw{width:12px;height:12px;border-radius:2px;border:1px solid rgba(255,255,255,0.2);display:inline-block;flex-shrink:0}
+
 .section{padding:12px 16px;border-top:1px solid #30363d}
 .section h2{font-size:14px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
+.section h2 .emoji{margin-right:4px}
 .news-item{padding:6px 0;border-bottom:1px solid #21262d;font-size:13px}
-.news-item a{color:#58a6ff;text-decoration:none}
-.news-item a:hover{text-decoration:underline}
 .news-item .tag{font-size:11px;color:#8b949e}
+.news-item .client{font-size:11px;color:#6e7681}
 .top-list{display:flex;gap:16px;flex-wrap:wrap;font-size:13px}
 .top-list div{padding:6px 12px;border-radius:6px}
 .top-cheap{background:#0a4420;color:#3fb950}
-.top-expensive{background:#581;color:#f0b}
+.top-expensive{background:#581111;color:#ffaaaa}
 .top-restricted{background:#5a4e00;color:#ffd700}
-#footer{text-align:center;padding:6px;font-size:11px;color:#484f58}
+#footer{text-align:center;padding:6px;font-size:11px;color:#8b949e}
+#footer a{color:#58a6ff;text-decoration:none}
+.error-banner{padding:12px 16px;margin:12px 16px;background:#3d1010;border:1px solid #ff4444;border-radius:6px;color:#ffaaaa;font-size:13px}
+
+@media (prefers-reduced-motion: reduce){
+  *{transition:none!important;animation:none!important}
+}
 </style>
 </head>
 <body>
-<header>
-  <h1>⛽ Дизель-лимиты</h1>
-  <span id="stat">загрузка…</span>
+<header role="banner">
+  <h1><span class="emoji" aria-hidden="true">⛽</span>Дизель-лимиты</h1>
+  <span id="stat" role="status" aria-live="polite">загрузка…</span>
 </header>
-<div id="map"></div>
+<main>
+  <div id="map" role="application" aria-label="Интерактивная карта регионов России с ограничениями на продажу дизельного топлива. Используйте мышь для наведения и зума."></div>
 
-<div class="section" id="top-section">
-  <h2>📊 Топ регионов</h2>
-  <div class="top-list" id="top-list"></div>
-</div>
+  <section class="section" id="top-section" aria-labelledby="top-h">
+    <h2 id="top-h"><span class="emoji" aria-hidden="true">📊</span>Топ регионов</h2>
+    <div class="top-list" id="top-list" aria-live="polite"></div>
+  </section>
 
-<div class="section">
-  <h2>📰 Последние ограничения</h2>
-  <div id="news-list">загрузка…</div>
-</div>
+  <section class="section" aria-labelledby="news-h">
+    <h2 id="news-h"><span class="emoji" aria-hidden="true">📰</span>Последние ограничения</h2>
+    <div id="news-list" aria-live="polite">загрузка…</div>
+  </section>
+</main>
 
 <div id="footer">данные обновляются ежедневно · <span id="updated"></span></div>
 
+<noscript>
+  <p class="error-banner">Для работы интерактивной карты необходимо включить JavaScript в браузере.</p>
+</noscript>
+
 <script>
+// ============================================================
+//  УТИЛИТЫ БЕЗОПАСНОСТИ (защита от XSS при работе с DOM)
+// ============================================================
+
+// Экранирование HTML-спецсимволов
+function esc(s){
+  if(s==null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+// Валидация URL: только http/https (блок javascript:, data:)
+function safeUrl(u){
+  if(!u) return null;
+  try{
+    const url = new URL(String(u), location.href);
+    return ['http:','https:'].includes(url.protocol) ? url.href : null;
+  }catch(e){ return null; }
+}
+
+// Безопасная ссылка (с rel=noopener noreferrer)
+function safeLink(url, text){
+  const href = safeUrl(url);
+  if(!href) return esc(text);
+  return `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>`;
+}
+
+// Валидация числа
+function num(v){
+  const n = typeof v === 'number' ? v : parseFloat(v);
+  return isFinite(n) ? n : null;
+}
+
+// ============================================================
+//  КОНФИГ SEVERITY (один источник истины для цветов и подписей)
+// ============================================================
+const SEV = {
+  emergency: { fill:'#5c0000', border:'#ff4444', badge:'sev-emergency', label:'🟤 ЧС' },
+  strict:    { fill:'#7a1f1f', border:'#ff5555', badge:'sev-strict',    label:'🔴 Жёсткие' },
+  limit:     { fill:'#5a4e00', border:'#ffd700', badge:'sev-warn',      label:'🟠 Лимиты' },
+  none:      { fill:'#2d333b', border:'#30363d', badge:'sev-ok',        label:'🟢 Нет ограничений' }
+};
+
+function getSeverity(restrictions){
+  if(!restrictions || !restrictions.length) return 'none';
+  let worst = 'limit';
+  for(const r of restrictions){
+    const l = (r.limit || '').toLowerCase();
+    // emergency: полный запрет / ЧС / закрытие АЗС
+    if(l.includes('полное') || l.includes('чс') || l.includes('закрыт')) return 'emergency';
+    // strict: запрет, не продают, лимит < 30 л
+    if(l.includes('запрет') || l.includes('не продают')) worst = 'strict';
+    const m = l.match(/(\d+)\s*л/);
+    if(m && parseInt(m[1], 10) < 30) worst = 'strict';
+    if(r.limit_type === 'запрет') worst = 'strict';
+  }
+  return worst;
+}
+
+// Карта синонимов имён регионов (нормализация к именам в russia_topo.json)
+const nameFix = {
+  'Дагестан': 'Республика Дагестан',
+  'Якутия': 'Республика Саха (Якутия)',
+  'Чечня': 'Чеченская Республика',
+  'Крым': 'Республика Крым',
+  'Севастополь': 'город федерального значения Севастополь',
+  'ХМАО': 'Ханты-Мансийский АО - Югра',
+  'ЯНАО': 'Ямало-Ненецкий АО',
+  'НАО': 'Ненецкий АО',
+  'Чукотка': 'Чукотский АО',
+  'Кабардино-Балкария': 'Кабардино-Балкарская Республика',
+  'Карачаево-Черкесия': 'Карачаево-Черкесская Республика',
+  'Северная Осетия': 'Республика Северная Осетия - Алания',
+  'Адыгея': 'Республика Адыгея (Адыгея)',
+  'Татарстан': 'Республика Татарстан (Татарстан)',
+  'Башкортостан': 'Республика Башкортостан',
+  'Бурятия': 'Республика Бурятия',
+  'Тыва': 'Республика Тыва',
+  'Хакасия': 'Республика Хакасия',
+  'Алтай': 'Республика Алтай',
+  'Калмыкия': 'Республика Калмыкия',
+  'Ингушетия': 'Республика Ингушетия',
+  'Марий Эл': 'Республика Марий Эл',
+  'Мордовия': 'Республика Мордовия',
+  'Карелия': 'Республика Карелия',
+  'Коми': 'Республика Коми',
+  'Удмуртия': 'Удмуртская Республика',
+  'Чувашия': 'Чувашская Республика - Чувашия',
+  'Камчатка': 'Камчатский край',
+  'Приморье': 'Приморский край',
+  'Хабаровск': 'Хабаровский край',
+  'Забайкалье': 'Забайкальский край',
+  'Пермь': 'Пермский край',
+  'Краснодарск': 'Краснодарский край',
+  'Ставрополь': 'Ставропольский край',
+  'ЕАО': 'Еврейская АО'
+};
+
+function getRegionName(name){
+  return nameFix[name] || name;
+}
+
+// ============================================================
+//  КЕШ DOM-ССЫЛОК
+// ============================================================
+const els = {
+  stat:     document.getElementById('stat'),
+  updated:  document.getElementById('updated'),
+  topList:  document.getElementById('top-list'),
+  newsList: document.getElementById('news-list')
+};
+
 const map = L.map('map', {
   center: [62, 97], zoom: 4, zoomControl: true,
   worldCopyJump: false,
   maxBounds: [[38, 15], [85, 190]],
-  maxBoundsViscosity: 1
+  maxBoundsViscosity: 1,
+  // preferCanvas: true  // включить при большом числе полигонов
 });
+
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
   subdomains: 'abcd', maxZoom: 19,
-  bounds: [[40, 18], [83, 191]]
+  bounds: [[40, 18], [83, 191]],
+  attribution: '© OpenStreetMap, © CARTO'
 }).addTo(map);
 
-function getSeverity(price, restrictions) {
-  if (!restrictions || restrictions.length === 0) return 'none';
-  for (const r of restrictions) {
-    var l = (r.limit || '').toLowerCase();
-    // emergency: complete ban, ЧС
-    if (l.includes('полное') || l.includes('свободная') || l.includes('чс')) return 'emergency';
-    // strict: запрет, не продают, or very low volume
-    if (l.includes('запрет') || l.includes('не продают')) return 'strict';
-    var m = l.match(/(\d+)\s*л/);
-    if (m && parseInt(m[1]) < 30) return 'strict';
-    if (r.limit_type === 'запрет') return 'strict';
-  }
-  return 'limit';
-}
-function severityColor(s) {
-  if (s === 'emergency') return { fill: '#3d0000', border: '#ff4444' };
-  if (s === 'strict')    return { fill: '#5c0000', border: '#ff5555' };
-  if (s === 'limit')     return { fill: '#5a4e00', border: '#ffd700' };
-  return { fill: '#2d333b', border: '#30363d' };
-}
-function severityLabel(s) {
-  if (s === 'emergency') return { text: '🟤 ЧС', cls: 'sev-danger' };
-  if (s === 'strict')    return { text: '🔴 Жёсткие', cls: 'sev-danger' };
-  if (s === 'limit')     return { text: '🟠 Лимиты', cls: 'sev-warn' };
-  return { text: '🟡 Нет данных', cls: '' };
-}
-
-const nameFix = {};
-function getRegionName(name) { return name; }
-
-async function init() {
-  const [topo, data] = await Promise.all([
-    fetch('/static/russia_topo.json').then(r=>r.json()),
-    fetch('/static/data.json').then(r=>r.json())
-  ]);
-  const geo = topojson.feature(topo, topo.objects.name);
-  const prices = data.prices || {};
-  const restrictions = data.restrictions || [];
-  const rByRegion = {};
-  restrictions.forEach(r => { (rByRegion[r.region] = rByRegion[r.region] || []).push(r); });
-
-  const vals = Object.values(prices).filter(v=>v>0);
-  const avg = vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(1) : '—';
-  const min = vals.length ? Math.min(...vals) : 0;
-  const max = vals.length ? Math.max(...vals) : 0;
-
-  document.getElementById('stat').textContent =
-    `${Object.keys(prices).length} рег. · средняя ${avg} ₽/л · ${min}-${max} ₽/л`;
-  document.getElementById('updated').textContent = 'обновлено: ' + (data.updated || '—');
-
-  // top list
-  const cheap = Object.entries(prices).sort((a,b)=>a[1]-b[1]).slice(0,3);
-  const expensive = Object.entries(prices).sort((a,b)=>b[1]-a[1]).slice(0,3);
-  const restricted = Object.entries(rByRegion).filter(([k,v])=>getSeverity(prices[k],v)==='emergency'||getSeverity(prices[k],v)==='strict').slice(0,3);
-  document.getElementById('top-list').innerHTML = `
-    <div class="top-cheap">🟢 Самые дешёвые: ${cheap.map(([r,p])=>`${r} ${p}₽`).join(' · ')||'—'}</div>
-    <div class="top-expensive">🔴 Самые дорогие: ${expensive.map(([r,p])=>`${r} ${p}₽`).join(' · ')||'—'}</div>
-    ${restricted.length ? `<div class="top-restricted">⛔ Критические регионы: ${restricted.map(([r])=>r).join(' · ')}</div>` : ''}
-  `;
-
-  function getRegionName(name) { return nameFix[name] || name; }
-
-  const geojson = L.geoJSON(geo, {
-    style: f => {
-      const name = getRegionName(f.properties.name);
-      const p = prices[name];
-      const rl = rByRegion[name] || [];
-      const s = getSeverity(p, rl);
-      const c = severityColor(s);
-      return { fillColor: c.fill, weight: 0.3, opacity: 1, color: '#0d1117', fillOpacity: 0.9 };
-    },
-    onEachFeature: (f, layer) => {
-      const name = getRegionName(f.properties.name);
-      const p = prices[name];
-      const rl = rByRegion[name] || [];
-      const s = getSeverity(p, rl);
-      const sev = severityLabel(s);
-      const popup = document.createElement('div');
-      popup.className = 'popup';
-      popup.innerHTML = `<h3>${name}</h3>
-        <span class="severity ${sev.cls}">${sev.text}</span>
-        <div class="price">${p ? p.toFixed(1) + ' ₽/л' : 'нет данных'}</div>
-        ${rl.length ? `<ul class="restrictions">${rl.map(r =>
-          `<li>${r.network||'все АЗС'}: <b>${r.limit}</b>${r.source?` (<a href="${r.source}" target="_blank">ист</a>)`:''}</li>`
-        ).join('')}</ul>` : ''}`;
-      layer.bindPopup(popup);
-      layer.on('mouseover', () => { layer.setStyle({ weight: 1.5, color: '#f0f6fc' }); });
-      layer.on('mouseout', () => { geojson.resetStyle(layer); });
-    }
-  }).addTo(map);
-  map.fitBounds(geojson.getBounds());
-
-  // news
-  const newsEl = document.getElementById('news-list');
-  if (restrictions.length === 0) {
-    newsEl.textContent = 'нет данных';
-  } else {
-    newsEl.innerHTML = restrictions.slice(-30).reverse().map(r =>
-      `<div class="news-item"><span class="tag">${r.region || '—'} · ${r.date || '—'}</span> ${r.network||'все АЗС'}: ${r.limit} ${r.source ? `<a href="${r.source}" target="_blank">🔗</a>` : ''}</div>`
+// Легенда
+const legend = L.control({position: 'topright'});
+legend.onAdd = function(){
+  const d = L.DomUtil.create('div', 'legend');
+  d.innerHTML = '<h3>Статус ограничений</h3>' +
+    Object.entries(SEV).map(([k,v]) =>
+      `<div class="legend-row"><span class="sw" style="background:${v.fill}"></span>${v.label}</div>`
     ).join('');
+  return d;
+};
+legend.addTo(map);
+
+// ============================================================
+//  ЗАГРУЗКА ДАННЫХ (с обработкой ошибок)
+// ============================================================
+async function fetchJSON(url){
+  const r = await fetch(url, {cache: 'no-cache'});
+  if(!r.ok) throw new Error(`HTTP ${r.status} для ${url}`);
+  return r.json();
+}
+
+async function init(){
+  try{
+    if(typeof L === 'undefined') throw new Error('Leaflet не загрузился (проверьте интернет/CDN)');
+    if(typeof topojson === 'undefined') throw new Error('topojson-client не загрузился');
+
+    const [topo, data] = await Promise.all([
+      fetchJSON('/static/russia_topo.json'),
+      fetchJSON('/static/data.json')
+    ]);
+
+    // Защита от изменения ключа объекта в topojson
+    const objKey = Object.keys(topo.objects || {})[0];
+    if(!objKey) throw new Error('В topo.json нет объектов');
+    const geo = topojson.feature(topo, topo.objects[objKey]);
+
+    const prices = data.prices || {};
+    const restrictions = data.restrictions || [];
+    const rByRegion = {};
+    restrictions.forEach(r => {
+      (rByRegion[r.region] = rByRegion[r.region] || []).push(r);
+    });
+
+    // Валидация цен
+    const vals = Object.values(prices)
+      .map(v => num(v))
+      .filter(v => v !== null && v > 0);
+    const avg = vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(1) : '—';
+    const min = vals.length ? Math.min.apply(null, vals) : 0;
+    const max = vals.length ? Math.max.apply(null, vals) : 0;
+
+    els.stat.textContent =
+      `${Object.keys(prices).length} рег. · средняя ${avg} ₽/л · ${min}-${max} ₽/л`;
+    els.updated.textContent = 'обновлено: ' + (data.updated || '—');
+
+    // top list
+    const cheap = Object.entries(prices)
+      .map(([r,p]) => [r, num(p)])
+      .filter(([r,p]) => p !== null)
+      .sort((a,b) => a[1]-b[1])
+      .slice(0,3);
+    const expensive = Object.entries(prices)
+      .map(([r,p]) => [r, num(p)])
+      .filter(([r,p]) => p !== null)
+      .sort((a,b) => b[1]-a[1])
+      .slice(0,3);
+    const restricted = Object.entries(rByRegion)
+      .filter(([k,v]) => {
+        const s = getSeverity(v);
+        return s === 'emergency' || s === 'strict';
+      })
+      .slice(0,3);
+
+    // БЕЗОПАСНОСТЬ: все вставки экранируются через esc()
+    els.topList.innerHTML =
+      `<div class="top-cheap">🟢 Самые дешёвые: ${cheap.map(([r,p]) => `${esc(r)} ${p}₽`).join(' · ') || '—'}</div>` +
+      `<div class="top-expensive">🔴 Самые дорогие: ${expensive.map(([r,p]) => `${esc(r)} ${p}₽`).join(' · ') || '—'}</div>` +
+      (restricted.length ? `<div class="top-restricted">⛔ Критические регионы: ${restricted.map(([r]) => esc(r)).join(' · ')}</div>` : '');
+
+    const geojson = L.geoJSON(geo, {
+      style: f => {
+        const name = getRegionName(f.properties.name);
+        const rl = rByRegion[name] || [];
+        const s = getSeverity(rl);
+        const c = SEV[s] || SEV.none;
+        return {
+          fillColor: c.fill,
+          weight: 0.6,
+          opacity: 1,
+          color: '#30363d',
+          fillOpacity: 0.88
+        };
+      },
+      onEachFeature: (f, layer) => {
+        const name = getRegionName(f.properties.name);
+        const p = num(prices[name]);
+        const rl = rByRegion[name] || [];
+        const s = getSeverity(rl);
+        const sev = SEV[s] || SEV.none;
+
+        // Tooltip с названием региона при hover
+        layer.bindTooltip(name, {sticky: true, direction: 'top'});
+
+        // Popup с детальной информацией (БЕЗОПАСНОСТЬ: всё экранировано)
+        const popup = document.createElement('div');
+        popup.className = 'popup';
+        let html = `<h3>${esc(name)}</h3>`;
+        html += `<span class="severity ${sev.badge}">${sev.label}</span>`;
+        html += `<div class="price">${p !== null ? p.toFixed(1) + ' ₽/л' : 'нет данных'}</div>`;
+        if(rl.length){
+          html += '<ul class="restrictions">';
+          html += rl.map(r => {
+            const net = esc(r.network || 'все АЗС');
+            const lim = esc(r.limit || '');
+            const client = r.client ? ` <span class="client">(${esc(r.client)})</span>` : '';
+            const date = r.date ? ` <span class="client">· ${esc(r.date)}</span>` : '';
+            const src = r.source ? ` (${safeLink(r.source, 'ист')})` : '';
+            return `<li>${net}: <b>${lim}</b>${client}${date}${src}</li>`;
+          }).join('');
+          html += '</ul>';
+        }
+        popup.innerHTML = html;
+        layer.bindPopup(popup);
+
+        layer.on('mouseover', () => {
+          layer.setStyle({weight: 2, color: '#f0f6fc'});
+          layer.bringToFront();
+        });
+        layer.on('mouseout', () => geojson.resetStyle(layer));
+      }
+    }).addTo(map);
+    map.fitBounds(geojson.getBounds());
+
+    // Новости: ИСПРАВЛЕНО slice(-30).reverse() → slice(0, 30)
+    // (restrictions уже отсортированы DESC — новые первыми)
+    if(restrictions.length === 0){
+      els.newsList.textContent = 'нет данных';
+    } else {
+      els.newsList.innerHTML = restrictions.slice(0, 30).map(r => {
+        const region = esc(r.region || '—');
+        const date = esc(r.date || '—');
+        const net = esc(r.network || 'все АЗС');
+        const lim = esc(r.limit || '');
+        const client = r.client ? ` <span class="client">(${esc(r.client)})</span>` : '';
+        const link = r.source ? ` ${safeLink(r.source, '🔗')}` : '';
+        return `<div class="news-item"><span class="tag">${region} · ${date}</span> ${net}${client}: ${lim}${link}</div>`;
+      }).join('');
+    }
+
+    console.info(`Карта готова: ${Object.keys(prices).length} цен, ${restrictions.length} ограничений`);
+
+  } catch(err){
+    console.error('Ошибка инициализации карты:', err);
+    els.stat.textContent = '⚠ ошибка загрузки';
+    els.stat.style.color = '#ff8888';
+    els.newsList.innerHTML =
+      `<div class="error-banner"><b>Не удалось загрузить данные карты.</b><br>` +
+      `${esc(err.message || 'Неизвестная ошибка')}<br>` +
+      `<small style="color:#8b949e">Попробуйте обновить страницу. Если ошибка повторяется — проверьте, что файлы ` +
+      `<code>/static/russia_topo.json</code> и <code>/static/data.json</code> доступны.</small></div>`;
   }
 }
+
 init();
 </script>
 </body>

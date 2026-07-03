@@ -1,28 +1,50 @@
 #!/usr/bin/env python3
-"""Send diesel heatmap + daily changes summary to @disel_limits_update."""
-import requests, sqlite3, shutil
+"""Send diesel heatmap + daily changes summary to @disel_limits_update.
+
+Улучшения безопасности:
+- Telegram-токен берётся из переменной окружения TG_BOT_TOKEN (не из кода).
+- Chat ID — из переменной окружения TG_CHAT_ID (опционально, дефолт ниже).
+- Если TG_BOT_TOKEN не задан — скрипт падает с понятной ошибкой.
+
+ВАЖНО: старый токен, который мог быть в публичной истории коммитов, нужно
+отозвать через @BotFather (команда /revoke).
+"""
+import os
+import sys
+import requests
+import sqlite3
+import shutil
 from PIL import Image
 from datetime import datetime
 
-BOT = "8878746981:AAFERGgoO7ZWK_EjLV3zEVPZToG0c7GWItw"
-CHAT = "-1004299364641"
-DB = "/root/diesel_limits/restrictions.db"
+BOT = os.environ.get("TG_BOT_TOKEN")
+if not BOT:
+    sys.exit("❌ TG_BOT_TOKEN не задан в окружении. Экспортируйте переменную: "
+             "export TG_BOT_TOKEN='ваш_токен' (и отзовите старый токен через @BotFather)")
+
+CHAT = os.environ.get("TG_CHAT_ID", "-1004299364641")
+DB = os.environ.get("DIESEL_DB", "/root/diesel_limits/restrictions.db")
 
 today = datetime.now().strftime("%d.%m.%Y")
 db = sqlite3.connect(DB)
 
 # prices
 p_cnt = db.execute("SELECT COUNT(*) FROM prices").fetchone()[0]
-p_avg = db.execute("SELECT ROUND(AVG(price),1) FROM prices").fetchone()[0]
-p_min = db.execute("SELECT MIN(price) FROM prices").fetchone()[0]
-p_max = db.execute("SELECT MAX(price) FROM prices").fetchone()[0]
+p_avg = db.execute("SELECT ROUND(AVG(price),1) FROM prices").fetchone()[0] or 0
+p_min = db.execute("SELECT MIN(price) FROM prices").fetchone()[0] or 0
+p_max = db.execute("SELECT MAX(price) FROM prices").fetchone()[0] or 0
 
 # restrictions active
 r_active = db.execute("SELECT COUNT(*) FROM restrictions WHERE is_current=1").fetchone()[0]
-r_changes = db.execute("SELECT COUNT(*) FROM restrictions WHERE previous_value IS NOT NULL AND updated_at >= datetime('now','-1 day')").fetchone()[0]
+r_changes = db.execute(
+    "SELECT COUNT(*) FROM restrictions WHERE previous_value IS NOT NULL "
+    "AND updated_at >= datetime('now','-1 day')"
+).fetchone()[0]
 
 # regions under restrictions (distinct)
-r_regions = db.execute("SELECT COUNT(DISTINCT region) FROM restrictions WHERE is_current=1").fetchone()[0]
+r_regions = db.execute(
+    "SELECT COUNT(DISTINCT region) FROM restrictions WHERE is_current=1"
+).fetchone()[0]
 
 db.close()
 
