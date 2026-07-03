@@ -225,30 +225,18 @@ def main():
             "weekly_change": weekly_changes.get(name)
         })
 
-    # Changelog — генерим из БД, не дёргаем Telegram (там и карты и summary вперемешку)
+    # Changelog — читает из файла, который пишет publish-крон
+    CHANGELOG_FILE = "/srv/static/changelog_latest.txt"
     changelog = ""
     changelog_date = ""
     try:
-        rows = db.execute(
-            "SELECT region, previous_value, limit_value, limit_type, network "
-            "FROM restrictions "
-            "WHERE previous_value IS NOT NULL "
-            "AND updated_at >= datetime('now', '-1 day') "
-            "LIMIT 10"
-        ).fetchall()
-        if rows:
-            lines = []
-            for r in rows:
-                region = normalize_region(r[0])
-                old_val = r[1]
-                new_val = r[2]
-                network = f" ({r[4]})" if r[4] else ""
-                lines.append(f"  {region}{network}: {old_val} → {new_val}")
-            msk = timezone(timedelta(hours=3))
-            today = datetime.now(msk).strftime("%d.%m.%Y")
-            changelog = f"Изменения за {today}:\n" + "\n".join(lines)
-            changelog_date = datetime.now(msk).strftime("%d.%m.%Y %H:%M")
-    except sqlite3.OperationalError:
+        with open(CHANGELOG_FILE) as f:
+            raw = f.read().strip()
+        if raw:
+            lines = raw.split("\n", 1)
+            changelog = lines[0]
+            changelog_date = lines[1].strip() if len(lines) > 1 else ""
+    except (FileNotFoundError, OSError):
         pass
     if not changelog:
         changelog = "За сутки изменений нет"
