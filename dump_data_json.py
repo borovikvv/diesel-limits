@@ -3,18 +3,21 @@
 
 Формат данных для новой карты (5 уровней жёсткости + лимиты для грузовиков):
 {
-  "regions": [
+  "regions": [...],
+  "updated": "03.07.2026 15:46 МСК",
+  "changelog": "Текст последнего summary из Telegram",
+  "changelog_date": "03.07.2026",
+  "recent_news": [
     {
       "region": "Москва",
-      "level": 2,
-      "price": 79.00,
-      "limit_text": "Лимит 60 л в городе / 200 л на трассе",
-      "truck_limits": [...],
-      "weekly_change": null
+      "network": "Газпромнефть",
+      "limit": "60 л",
+      "client": "все",
+      "source": "https://...",
+      "date": "03.07.2026"
     },
     ...
-  ],
-  "updated": "03.07.2026 15:46 МСК"
+  ]
 }
 
 Уровни жёсткости:
@@ -29,10 +32,12 @@ import sqlite3
 import json
 import os
 import re
+import urllib.request
 from datetime import datetime, timezone, timedelta
 
 DB = "/root/diesel_limits/restrictions.db"
 OUT = "/srv/static/data.json"
+TG_CHANNEL = "disel_limits_update"  # без @
 
 REGION_ALIASES = {
     "Дагестан": "Республика Дагестан",
@@ -100,22 +105,15 @@ def calc_level(limit_text, has_source=False):
         return -1
     l = limit_text.lower()
 
-    # Дефицит / ЧС
     if any(w in l for w in ['закрыт', 'чс', 'дефицит', 'режим чс']):
         return 4
 
-    # Подтверждённое отсутствие ограничений — только если есть источник
     if 'без ограничений' in l or 'свободн' in l or 'без лимит' in l:
-        # Если текст явно подтверждает (например «Роснефть: без лимита»),
-        # но это лишь одна сеть — оставляем как «нет данных» по региону.
-        # Полное подтверждение должно быть отдельным флагом has_source.
         return 0 if has_source else -1
 
-    # Жёсткие: только в бак, запрет канистр
     if 'только в бак' in l or 'запрет канистр' in l or 'канистр запрещ' in l:
         return 3
 
-    # Лимиты по объёму
     m = re.search(r'(\d+)\s*л', l)
     if m:
         lim = int(m.group(1))
@@ -123,20 +121,69 @@ def calc_level(limit_text, has_source=False):
             return 3
         elif lim < 100:
             return 2
-        else:  # 100-200 л
+        else:
             return 1
 
-    # Если есть слово «лимит» но не поняли — средние
     if 'лимит' in l or 'огранич' in l:
         return 2
 
-    # По умолчанию — нет данных
     return -1
+
+
+def fetch_tg_summary():
+    """Получает последний пост из Telegram-канала (через публичный t.me/s/...).
+
+    Возвращает (text, date_str) или (None, None) при ошибке.
+    Не требует Telegram API токена — использует публичную веб-версию канала.
+    """
+    url = f"https://t.me/s/{TG_CHANNEL}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+
+        # Простая регэксп-парсинг: ищем последний блок сообщения
+        # t.me/s/... отдаёт HTML с классами tgme_widget_message_text
+        msgs = re.findall(
+            r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>',
+            html, re.DOTALL
+        )
+        if not msgs:
+            return None, None
+
+        # Берём последнее (в t.me/s новые внизу)
+        last = msgs[-1]
+        # Очистка HTML-тегов
+        text = re.sub(r'<br\s*/?>', '\n', last)
+        text = re.sub(r'<[^>]+>', '', text)
+        text = text.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+        text = text.strip()
+
+        # Дата
+        dates = re.findall(
+            r'<time datetime="([^"]+)"',
+            html
+        )
+        date_str = ""
+        if dates:
+            try:
+                dt = datetime.fromisoformat(dates[-1].replace("Z", "+00:00"))
+                msk = timezone(timedelta(hours=3))
+                date_str = dt.astimezone(msk).strftime("%d.%m.%Y %H:%M")
+            except Exception:
+                date_str = dates[-1]
+
+        return text, date_str
+
+    except Exception as e:
+        print(f"⚠ Не удалось получить Telegram-пост: {e}")
+        return None, None
 
 
 def main():
     db = sqlite3.connect(DB)
 
+    # Цены
     prices = {}
     for r in db.execute("SELECT region, price FROM prices"):
         name = normalize_region(r[0])
@@ -144,6 +191,7 @@ def main():
         if name and p is not None:
             prices[name] = p
 
+    # Ограничения
     restrictions_by_region = {}
     for r in db.execute(
         "SELECT region, network, limit_value, client_type, source_url, source_date "
@@ -161,6 +209,7 @@ def main():
             "date": r[5] or "—"
         })
 
+    # Изменения цен за неделю
     weekly_changes = {}
     try:
         for r in db.execute(
@@ -173,8 +222,31 @@ def main():
     except sqlite3.OperationalError:
         pass
 
+    # Последние 10 новостей (без фильтра is_current — все изменения)
+    recent_news = []
+    try:
+        for r in db.execute(
+            "SELECT region, network, limit_value, client_type, source_url, source_date "
+            "FROM restrictions "
+            "ORDER BY source_date DESC, region LIMIT 10"
+        ):
+            name = normalize_region(r[0])
+            if not name:
+                continue
+            recent_news.append({
+                "region": name,
+                "network": r[1] or "все сети",
+                "limit": r[2] or "",
+                "client": r[3] or "все",
+                "source": r[4] or "",
+                "date": r[5] or "—"
+            })
+    except sqlite3.OperationalError:
+        pass
+
     db.close()
 
+    # Regions
     regions = []
     all_names = set(prices.keys()) | set(restrictions_by_region.keys())
     for name in sorted(all_names):
@@ -206,12 +278,22 @@ def main():
             "weekly_change": weekly_changes.get(name)
         })
 
+    # Telegram summary (блок 1 — лента изменений)
+    changelog, changelog_date = fetch_tg_summary()
+    if not changelog:
+        changelog = "Лента обновлений временно недоступна. См. канал @disel_limits_update"
+        changelog_date = ""
+
     msk = timezone(timedelta(hours=3))
     updated = datetime.now(msk).strftime("%d.%m.%Y %H:%M МСК")
 
     data = {
         "regions": regions,
         "updated": updated,
+        "changelog": changelog,
+        "changelog_date": changelog_date,
+        "recent_news": recent_news,
+        # Обратная совместимость
         "prices": {r["region"]: r["price"] for r in regions if r["price"] is not None},
         "restrictions": [
             {"region": r["region"], "network": t["network"], "limit": t["limit"],
@@ -232,12 +314,14 @@ def main():
         shutil.copy2(index_src, index_dst)
         os.chmod(index_dst, 0o644)
 
-    print(f"dumped {OUT}: {len(regions)} regions")
+    print(f"dumped {OUT}: {len(regions)} regions, {len(recent_news)} recent news")
+    if changelog:
+        print(f"  changelog: {changelog[:80]}...")
     from collections import Counter
     c = Counter(r["level"] for r in regions)
-    labels = ["свободно", "мягкие", "средние", "жёсткие", "дефицит"]
-    for lv in range(5):
-        print(f"  Уровень {lv} ({labels[lv]}): {c.get(lv, 0)} регионов")
+    labels = ["нет данных", "свободно", "мягкие", "средние", "жёсткие", "дефицит"]
+    for lv in range(-1, 5):
+        print(f"  Уровень {lv} ({labels[lv+1]}): {c.get(lv, 0)} регионов")
 
 
 if __name__ == "__main__":
