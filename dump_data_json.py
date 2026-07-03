@@ -220,6 +220,14 @@ def main():
         json.dump(data, f, ensure_ascii=False)
     os.chmod(OUT, 0o644)
 
+    # ponytail: copy index.html to /srv/static/ so git pulls take effect
+    index_src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
+    index_dst = "/srv/static/index.html"
+    if os.path.exists(index_src):
+        import shutil
+        shutil.copy2(index_src, index_dst)
+        os.chmod(index_dst, 0o644)
+
     print(f"dumped {OUT}: {len(regions)} regions")
     from collections import Counter
     c = Counter(r["level"] for r in regions)
