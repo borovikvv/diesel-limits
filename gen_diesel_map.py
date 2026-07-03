@@ -6,7 +6,7 @@ from datetime import datetime
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt; import numpy as np
 
-ROOT = "/root/ai_business_pulse_hermes"
+ROOT = "/root/diesel_limits"
 
 # ── 1. CSV prices (most recent) ──
 csv_prices = defaultdict(list)
