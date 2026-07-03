@@ -9,6 +9,7 @@
 <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"
         integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i"
         crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; overflow: hidden; }
@@ -527,23 +528,60 @@ let CHANGELOG_DATE = "";
 let RECENT_NEWS    = [];
 const LEVEL_BY_ID  = Object.fromEntries(LEVELS.map(l => [l.id, l]));
 
+// Маппинг названий из topojson → названия в data.json
+const TOPO_ALIAS = {
+  "Адыгея": "Республика Адыгея (Адыгея)",
+  "Башкортостан": "Республика Башкортостан",
+  "Бурятия": "Республика Бурятия",
+  "Дагестан": "Республика Дагестан",
+  "Ингушетия": "Республика Ингушетия",
+  "Кабардино-Балкария": "Кабардино-Балкарская Республика",
+  "Калмыкия": "Республика Калмыкия",
+  "Карелия": "Республика Карелия",
+  "Крым": "Республика Крым",
+  "Марий Эл": "Республика Марий Эл",
+  "Мордовия": "Республика Мордовия",
+  "Севастополь": "город федерального значения Севастополь",
+  "Северная Осетия": "Республика Северная Осетия — Алания",
+  "Татарстан": "Республика Татарстан (Татарстан)",
+  "Тыва": "Республика Тыва",
+  "Хакасия": "Республика Хакасия",
+  "Чечня": "Чеченская Республика",
+  "Якутия": "Республика Саха (Якутия)"
+};
+
 // Загружаем данные из data.json (однократно)
 (async function loadData(){
   try{
-    const r = await fetch('/static/data.json');
-    const d = await r.json();
-    const raw = d.regions || d.features || d;
-    // FEATURES = regions с геометрией из inline, data.json их не содержит
-    // — геометрия остаётся inline
-    const geoById = {};
-    // (геометрия загружается в отдельном блоке, см. russia_topo.json)
-    FEATURES = raw.filter(f => f.geometry);
-    CRITICAL = raw.filter(f => f.level >= 3);
-    PRICE_HIKES = raw.filter(f => f.weekly_change > 0);
+    const [dataR, topoR] = await Promise.all([
+      fetch('/static/data.json'),
+      fetch('/static/russia_topo.json')
+    ]);
+    const d = await dataR.json();
+    const topo = await topoR.json();
+    // конвертируем TopoJSON → GeoJSON features
+    const geoFeatures = topojson.feature(topo, topo.objects.russia);
+    // merge data по region name
+    const dataMap = {};
+    (d.regions || d.features || d).forEach(r => { dataMap[r.region] = r; });
+    FEATURES = geoFeatures.features.map(f => {
+      const name = f.properties?.name || f.properties?.region || "";
+      const data = dataMap[name] || dataMap[TOPO_ALIAS[name]] || {};
+      return {
+        region: name,
+        level: data.level != null ? data.level : -1,
+        price: data.price || null,
+        limit_text: data.limit_text || "Нет данных",
+        truck_limits: data.truck_limits || [],
+        weekly_change: data.weekly_change || null,
+        geometry: f.geometry
+      };
+    });
+    CRITICAL = FEATURES.filter(f => f.level >= 3);
+    PRICE_HIKES = FEATURES.filter(f => f.weekly_change > 0);
     CHANGELOG = d.changelog || "";
     CHANGELOG_DATE = d.changelog_date || "";
     RECENT_NEWS = d.recent_news || [];
-    // перерисовка
     drawAll();
   }catch(e){
     console.warn("data.json not loaded:", e);
