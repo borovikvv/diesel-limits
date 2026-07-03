@@ -201,18 +201,22 @@ def main():
         price = prices.get(name)
         restricts = restrictions_by_region.get(name, [])
         has_source = any(r.get('source') for r in restricts)
-        if restricts:
+        fiz = [r for r in restricts if r['client'] in ('', 'физлица', None)]
+        ur = [r for r in restricts if r['client'] == 'юридические лица']
+        if fiz:
             parts = [f"{r['network']}: {r['limit']}" if r['network'] else r['limit']
-                     for r in restricts[:2]]
+                     for r in fiz[:2]]
             limit_text = "; ".join(parts)
+        else:
+            limit_text = "Нет данных"
+        if ur:
             truck_limits = [
                 {"network": r["network"] or "все сети",
                  "limit": r["limit"] or "Без ограничений",
                  "client": r["client"] or "все"}
-                for r in restricts
+                for r in ur
             ]
         else:
-            limit_text = "Нет данных"
             truck_limits = [
                 {"network": "все сети", "limit": "нет данных", "client": "все"}
             ]
