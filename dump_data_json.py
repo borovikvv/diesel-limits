@@ -30,5 +30,6 @@ data = {
 
 with open(OUT, "w") as f:
     json.dump(data, f, ensure_ascii=False)
+import os; os.chmod(OUT, 0o644)
 
 print(f"dumped {OUT}: {len(prices)} regions, {len(restrictions)} restrictions")
