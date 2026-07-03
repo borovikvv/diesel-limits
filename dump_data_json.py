@@ -180,19 +180,23 @@ def main():
     for name in sorted(all_names):
         price = prices.get(name)
         restricts = restrictions_by_region.get(name, [])
+        has_source = any(r.get('source') for r in restricts)
         if restricts:
             parts = [f"{r['network']}: {r['limit']}" if r['network'] else r['limit']
                      for r in restricts[:2]]
-            limit_text = "; ".join(parts) if parts else "Без ограничений"
+            limit_text = "; ".join(parts)
+            truck_limits = [
+                {"network": r["network"] or "все сети",
+                 "limit": r["limit"] or "Без ограничений",
+                 "client": r["client"] or "все"}
+                for r in restricts
+            ]
         else:
-            limit_text = "Без ограничений"
-        level = calc_level(limit_text, has_source=False)  # TODO: определять has_source по наличию source_url
-        truck_limits = [
-            {"network": r["network"] or "все сети",
-             "limit": r["limit"] or "без ограничений",
-             "client": r["client"] or "все"}
-            for r in restricts
-        ]
+            limit_text = "Нет данных"
+            truck_limits = [
+                {"network": "все сети", "limit": "нет данных", "client": "все"}
+            ]
+        level = calc_level(limit_text, has_source=has_source)
         regions.append({
             "region": name,
             "level": level,
