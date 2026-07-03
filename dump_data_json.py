@@ -32,12 +32,10 @@ import sqlite3
 import json
 import os
 import re
-import urllib.request
 from datetime import datetime, timezone, timedelta
 
 DB = "/root/diesel_limits/restrictions.db"
 OUT = "/srv/static/data.json"
-TG_CHANNEL = "disel_limits_update"  # без @
 
 REGION_ALIASES = {
     "Дагестан": "Республика Дагестан",
@@ -130,55 +128,6 @@ def calc_level(limit_text, has_source=False):
     return -1
 
 
-def fetch_tg_summary():
-    """Получает последний пост из Telegram-канала (через публичный t.me/s/...).
-
-    Возвращает (text, date_str) или (None, None) при ошибке.
-    Не требует Telegram API токена — использует публичную веб-версию канала.
-    """
-    url = f"https://t.me/s/{TG_CHANNEL}"
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
-
-        # Простая регэксп-парсинг: ищем последний блок сообщения
-        # t.me/s/... отдаёт HTML с классами tgme_widget_message_text
-        msgs = re.findall(
-            r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>',
-            html, re.DOTALL
-        )
-        if not msgs:
-            return None, None
-
-        # Берём последнее (в t.me/s новые внизу)
-        last = msgs[-1]
-        # Очистка HTML-тегов
-        text = re.sub(r'<br\s*/?>', '\n', last)
-        text = re.sub(r'<[^>]+>', '', text)
-        text = text.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-        text = text.strip()
-
-        # Дата
-        dates = re.findall(
-            r'<time datetime="([^"]+)"',
-            html
-        )
-        date_str = ""
-        if dates:
-            try:
-                dt = datetime.fromisoformat(dates[-1].replace("Z", "+00:00"))
-                msk = timezone(timedelta(hours=3))
-                date_str = dt.astimezone(msk).strftime("%d.%m.%Y %H:%M")
-            except Exception:
-                date_str = dates[-1]
-
-        return text, date_str
-
-    except Exception as e:
-        print(f"⚠ Не удалось получить Telegram-пост: {e}")
-        return None, None
-
 
 def main():
     db = sqlite3.connect(DB)
@@ -244,8 +193,6 @@ def main():
     except sqlite3.OperationalError:
         pass
 
-    db.close()
-
     # Regions
     regions = []
     all_names = set(prices.keys()) | set(restrictions_by_region.keys())
@@ -278,11 +225,36 @@ def main():
             "weekly_change": weekly_changes.get(name)
         })
 
-    # Telegram summary (блок 1 — лента изменений)
-    changelog, changelog_date = fetch_tg_summary()
+    # Changelog — генерим из БД, не дёргаем Telegram (там и карты и summary вперемешку)
+    changelog = ""
+    changelog_date = ""
+    try:
+        rows = db.execute(
+            "SELECT region, previous_value, limit_value, limit_type, network "
+            "FROM restrictions "
+            "WHERE previous_value IS NOT NULL "
+            "AND updated_at >= datetime('now', '-1 day') "
+            "LIMIT 10"
+        ).fetchall()
+        if rows:
+            lines = []
+            for r in rows:
+                region = normalize_region(r[0])
+                old_val = r[1]
+                new_val = r[2]
+                network = f" ({r[4]})" if r[4] else ""
+                lines.append(f"  {region}{network}: {old_val} → {new_val}")
+            msk = timezone(timedelta(hours=3))
+            today = datetime.now(msk).strftime("%d.%m.%Y")
+            changelog = f"Изменения за {today}:\n" + "\n".join(lines)
+            changelog_date = datetime.now(msk).strftime("%d.%m.%Y %H:%M")
+    except sqlite3.OperationalError:
+        pass
     if not changelog:
-        changelog = "Лента обновлений временно недоступна. См. канал @disel_limits_update"
-        changelog_date = ""
+        changelog = "За сутки изменений нет"
+        changelog_date = datetime.now(timezone(timedelta(hours=3))).strftime("%d.%m.%Y %H:%M")
+
+    db.close()
 
     msk = timezone(timedelta(hours=3))
     updated = datetime.now(msk).strftime("%d.%m.%Y %H:%M МСК")
