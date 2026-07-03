@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Send diesel heatmap + daily changes summary to @disel_limits_update."""
-import requests, sqlite3
+import requests, sqlite3, shutil
 from PIL import Image
 from datetime import datetime
 
@@ -43,4 +43,5 @@ url = f"https://api.telegram.org/bot{BOT}/sendPhoto"
 with open("/tmp/diesel_tg.png", "rb") as f:
     r = requests.post(url, data={"chat_id": CHAT, "caption": caption}, files={"photo": f})
 r.raise_for_status()
+shutil.copy2("/root/diesel_limits/tmp/diesel_heatmap.png", "/srv/static/diesel.png")
 print("sent", r.json()["result"]["message_id"])
