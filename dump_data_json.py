@@ -13,13 +13,14 @@ for r in db.execute("SELECT region, price FROM prices"):
     prices[r[0]] = r[1]
 
 restrictions = []
-for r in db.execute("SELECT region, network, limit_value, client_type, source_url FROM restrictions WHERE is_current=1 ORDER BY region"):
+for r in db.execute("SELECT region, network, limit_value, client_type, source_url, source_date FROM restrictions WHERE is_current=1 ORDER BY source_date DESC, region"):
     restrictions.append({
         "region": r[0],
         "network": r[1],
         "limit": r[2],
         "client": r[3],
-        "source": r[4]
+        "source": r[4],
+        "date": r[5] or "—"
     })
 
 data = {
