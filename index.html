@@ -412,7 +412,9 @@
   .error-banner b { color: #DC2626; display: block; margin-bottom: 4px; }
 
   @media (max-width: 900px) {
-    main { grid-template-columns: 1fr; overflow-y: auto; }
+    html, body { overflow: visible; }
+    #app { position: static; }
+    main { grid-template-columns: 1fr; overflow-y: visible; }
   }
 
   @media (prefers-reduced-motion: reduce) {
