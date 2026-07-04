@@ -746,7 +746,7 @@ const els = {
 try {
   if(typeof d3 === 'undefined') throw new Error('D3.js не загрузился (проверьте интернет)');
 
-  // 1. Вычисление bounds
+  // 1. Вычисление bounds (ponytail: Чукотка ~180°E растягивает карту — исключена)
   let minLon = 180, maxLon = -180, minLat = 90, maxLat = -90;
   function updateBounds(coords){
     coords.forEach(c => {
@@ -759,6 +759,7 @@ try {
     });
   }
   FEATURES.forEach(f => {
+    if(f.region === 'Чукотский АО') return; // ponytail: слишком далеко на восток
     const g = f.geometry;
     if(!g || !g.coordinates) return;
     if(g.type === "Polygon"){
