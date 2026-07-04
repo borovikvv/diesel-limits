@@ -746,12 +746,45 @@ const els = {
 try {
   if(typeof d3 === 'undefined') throw new Error('D3.js не загрузился (проверьте интернет)');
 
-  // 1. Вычисление bounds (ponytail: Чукотка ~180°E растягивает карту — исключена)
+  // 1. Предобработка: сдвиг Чукотки (и других регионов с lon > 150°)
+  //    на -65° для компактности. Без этого Чукотка на 175°E оставляет
+  //    огромное пустое Тихое океан между ДВ и Чукоткой.
+  //    Сдвиг по средней долготе региона (Чукотка имеет точки 157-180°,
+  //    "все > 170" не сработает).
+  function shiftCoords(coords, threshold = 150, shift = -65){
+    if(!coords || !coords.length) return coords;
+    let sum = 0, n = 0;
+    for(const c of coords){
+      if(c && c.length >= 2 && typeof c[0] === 'number'){
+        sum += c[0]; n++;
+      }
+    }
+    if(n === 0) return coords;
+    const avgLon = sum / n;
+    if(avgLon > threshold){
+      return coords.map(c => c && c.length >= 2 ? [c[0] + shift, c[1]] : c);
+    }
+    return coords;
+  }
+  function shiftGeometry(geom){
+    if(!geom) return geom;
+    if(geom.type === "Polygon"){
+      return { type: "Polygon", coordinates: geom.coordinates.map(r => shiftCoords(r)) };
+    }
+    if(geom.type === "MultiPolygon"){
+      return { type: "MultiPolygon", coordinates: geom.coordinates.map(poly => poly.map(r => shiftCoords(r))) };
+    }
+    return geom;
+  }
+  FEATURES.forEach(f => { f.geometry = shiftGeometry(f.geometry); });
+
+  // 2. Вычисление bounds по всем регионам (включая сдвинутую Чукотку)
   let minLon = 180, maxLon = -180, minLat = 90, maxLat = -90;
   function updateBounds(coords){
     coords.forEach(c => {
       if(!c || c.length < 2) return;
       const [lon, lat] = c;
+      if(typeof lon !== 'number' || typeof lat !== 'number') return;
       if(lon < minLon) minLon = lon;
       if(lon > maxLon) maxLon = lon;
       if(lat < minLat) minLat = lat;
@@ -759,7 +792,6 @@ try {
     });
   }
   FEATURES.forEach(f => {
-    if(f.region === 'Чукотский АО') return; // ponytail: слишком далеко на восток
     const g = f.geometry;
     if(!g || !g.coordinates) return;
     if(g.type === "Polygon"){
@@ -774,16 +806,22 @@ try {
   const geoWidth  = maxLon - minLon;
   const geoHeight = maxLat - minLat;
 
-  // 2. SVG + простая проекция (равноугольная, без искажений Меркатора)
+  // 3. SVG + проекция с коррекцией Меркатора (cos(lat))
+  //    Без коррекции карта растягивается по горизонтали на северных широтах:
+  //    1° долготы на 60°N ≈ 0.5° широты (cos(60°)=0.5).
+  //    Без коррекции aspect = 4.4, с коррекцией ≈ 2.0.
   const svg = els.svg;
+  const midLat = (minLat + maxLat) / 2;
+  const cosLat = Math.cos(midLat * Math.PI / 180);
+  const effWidth = geoWidth * cosLat;
   const VB_W = 1000;
-  const VB_H = 1000 * (geoHeight / geoWidth);
+  const VB_H = 1000 * (geoHeight / effWidth);
   svg.attr("viewBox", `0 0 ${VB_W} ${VB_H}`);
-  const scaleX = VB_W / geoWidth;
+  const scaleX = VB_W / effWidth;
   const scaleY = VB_H / geoHeight;
 
   function project(lon, lat){
-    return [(lon - minLon) * scaleX, VB_H - (lat - minLat) * scaleY];
+    return [(lon - minLon) * cosLat * scaleX, VB_H - (lat - minLat) * scaleY];
   }
 
   function makePathD(geometry){
@@ -828,6 +866,42 @@ try {
     .on("click", function(event, d){
       showRegionCard(d);
     });
+
+  // 4.5. Индикатор разрыва между ДВ и Чукоткой
+  // Чукотка сдвинута на -65° для компактности. Рисуем две параллельные
+  // пунктирные линии с подписью "≈" между ними, чтобы было видно разрыв.
+  (function drawBreakIndicator(){
+    const breakLat = 64;  // средняя широта Чукотки
+    const breakLonStart = 135;  // ДВ край (Магадан)
+    const breakLonEnd = 110;    // Чукотка после сдвига
+    const [x1, y1] = project(breakLonStart, breakLat);
+    const [x2, y2] = project(breakLonEnd, breakLat);
+    const dy = 18;  // расстояние между линиями
+    // Две линии
+    const lines = `M ${x1.toFixed(1)},${(y1-dy).toFixed(1)} L ${x2.toFixed(1)},${(y2-dy).toFixed(1)} M ${x1.toFixed(1)},${(y1+dy).toFixed(1)} L ${x2.toFixed(1)},${(y2+dy).toFixed(1)}`;
+    g.append("path")
+      .attr("d", lines)
+      .attr("stroke", "#64748B")
+      .attr("stroke-width", 1.5)
+      .attr("stroke-dasharray", "4,3")
+      .attr("fill", "none")
+      .attr("opacity", 0.7)
+      .style("pointer-events", "none");
+    // Подпись "≈" по центру разрыва
+    const midX = (x1 + x2) / 2;
+    const midY = (y1 + y2) / 2;
+    g.append("text")
+      .attr("x", midX)
+      .attr("y", midY)
+      .attr("text-anchor", "middle")
+      .attr("dominant-baseline", "central")
+      .attr("font-size", "14")
+      .attr("font-weight", "700")
+      .attr("fill", "#64748B")
+      .attr("font-family", "Arial, sans-serif")
+      .style("pointer-events", "none")
+      .text("≈");
+  })();
 
   // 5. Подписи цен для крупных регионов
   function polygonArea(coords){
