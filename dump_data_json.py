@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Dump restrictions + prices DB to /srv/static/data.json for the site.
 
+Перед выгрузкой запускает normalize_current.py, который выставляет
+is_current=1 самой свежей записи по каждому региону+сети+клиенту,
+а остальные — is_current=0. Это гарантирует, что данные на карте
+всегда актуальны, независимо от того, с каким is_current их вставили.
+
 Формат данных для новой карты (5 уровней жёсткости + лимиты для грузовиков):
 {
   "regions": [...],
@@ -32,6 +37,8 @@ import sqlite3
 import json
 import os
 import re
+import subprocess
+import sys
 from datetime import datetime, timezone, timedelta
 
 DB = "/root/diesel_limits/restrictions.db"
@@ -74,6 +81,23 @@ REGION_ALIASES = {
     "Краснодарск": "Краснодарский край",
     "Ставрополь": "Ставропольский край",
     "ЕАО": "Еврейская АО",
+    "Москва и Московская область": "Московская область",
+    # ponytail: normalize duplicate names that differ by prefix/format
+    "г. Москва": "Москва",
+    "г. Санкт-Петербург": "Санкт-Петербург",
+    "Чувашская Республика - Чувашия": "Чувашская Республика",
+    "Чувашская республика": "Чувашская Республика",
+    "Еврейская автономная область": "Еврейская АО",
+    "Кемеровская область - Кузбасс": "Кемеровская область",
+    "Республика Северная Осетия - Алания": "Республика Северная Осетия — Алания",
+    "Удмуртская республика": "Удмуртская Республика",
+    "Ханты-Мансийский автономный округ": "Ханты-Мансийский АО - Югра",
+    "Ханты-Мансийский автономный округ - Югра": "Ханты-Мансийский АО - Югра",
+    "Ханты-Мансийский автономный округ — Югра": "Ханты-Мансийский АО - Югра",
+    "Ямало-Ненецкий автономный округ": "Ямало-Ненецкий АО",
+    "Свердловская область (Екатеринбург)": "Свердловская область",
+    "Челябинская область (Кыштым)": "Челябинская область",
+    "Карачаево-Черкесия": "Карачаево-Черкесская Республика",
 }
 
 
@@ -99,20 +123,33 @@ def calc_level(limit_text, has_source=False):
     -1 = нет данных (ограничения могут быть, но не подтверждены)
      0 = подтверждённое отсутствие ограничений (нужен has_source=True)
      1-4 = нарастание жёсткости
+
+    ВАЖНО: сначала проверяем жёсткие маркеры, потом мягкие.
     """
     if not limit_text:
         return -1
     l = limit_text.lower()
 
-    if any(w in l for w in ['закрыт', 'чс', 'дефицит', 'режим чс']):
+    # Level 4 — полный дефицит / ЧС / АЗС не работают
+    if any(w in l for w in ['закрыт', 'чс', 'дефицит', 'режим чс',
+                             'только госслужб', 'только для гос', 'максимальн',
+                             'полное ограничение свободн']):
         return 4
 
-    if 'без ограничений' in l or 'свободн' in l or 'без лимит' in l:
-        return 0 if has_source else -1
-
-    if 'только в бак' in l or 'запрет канистр' in l or 'канистр запрещ' in l:
+    # Level 3 — жёсткие лимиты: только в бак, запрет канистр, < 40 л
+    if any(w in l for w in ['только в бак', 'запрет канистр', 'канистр запрещ',
+                             'полное ограничение', 'полный запрет']):
         return 3
 
+    # Level 0 — подтверждённая свобода (проверяем после жёстких маркеров,
+    # чтобы "свободной" в "ограничение свободной продажи" не сработало)
+    if ('без ограничений' in l or 'без лимит' in l or l == 'свободно'):
+        return 0 if has_source else -1
+    # Отдельное слово "свободно" только если нет "ограничен" рядом
+    if 'свободн' in l and 'ограничен' not in l:
+        return 0 if has_source else -1
+
+    # Level 3 — числа < 40 л
     m = re.search(r'(\d+)\s*л', l)
     if m:
         lim = int(m.group(1))
@@ -123,6 +160,7 @@ def calc_level(limit_text, has_source=False):
         else:
             return 1
 
+    # Level 2 — упоминание лимитов/ограничений без конкретных цифр
     if 'лимит' in l or 'огранич' in l:
         return 2
 
@@ -131,6 +169,15 @@ def calc_level(limit_text, has_source=False):
 
 
 def main():
+    # Шаг 0: нормализация is_current — самые свежие записи = актуальные
+    try:
+        subprocess.run(
+            [sys.executable, os.path.join(os.path.dirname(__file__), "normalize_current.py")],
+            check=True, capture_output=True, text=True
+        )
+    except Exception as e:
+        print(f"⚠ normalize_current не выполнен: {e}")
+
     db = sqlite3.connect(DB)
 
     # Цены
@@ -196,13 +243,21 @@ def main():
 
     # Regions
     regions = []
+
+    # Правило наследования: если у Московской области нет своих ограничений — берём от Москвы
+    if "Московская область" not in restrictions_by_region and "Москва" in restrictions_by_region:
+        restrictions_by_region["Московская область"] = restrictions_by_region["Москва"]
+    # Цену тоже наследуем, если своей нет
+    if "Московская область" not in prices and "Москва" in prices:
+        prices["Московская область"] = prices["Москва"]
+
     all_names = set(prices.keys()) | set(restrictions_by_region.keys())
     for name in sorted(all_names):
         price = prices.get(name)
         restricts = restrictions_by_region.get(name, [])
         has_source = any(r.get('source') for r in restricts)
-        fiz = [r for r in restricts if r['client'] in ('', 'физлица', None)]
-        ur = [r for r in restricts if r['client'] == 'юридические лица']
+        fiz = [r for r in restricts if r['client'] in ('', 'физлица', 'все', None)]
+        ur = [r for r in restricts if r['client'] in ('юридические лица', 'юрлица')]
         if fiz:
             parts = [f"{r['network']}: {r['limit']}" if r['network'] else r['limit']
                      for r in fiz[:2]]

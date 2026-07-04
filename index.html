@@ -86,6 +86,8 @@
     background: #FFFFFF;
     overflow: hidden;
     border-right: 1px solid #E2E8F0;
+    min-height: 400px;
+    height: 100%;
   }
   #map-svg {
     display: block;
@@ -547,8 +549,16 @@ const TOPO_ALIAS = {
   "Тыва": "Республика Тыва",
   "Хакасия": "Республика Хакасия",
   "Чечня": "Чеченская Республика",
-  "Якутия": "Республика Саха (Якутия)"
+  "Якутия": "Республика Саха (Якутия)",
+  "Москва": "г. Москва",
+  "Санкт-Петербург": "г. Санкт-Петербург",
+  "Карачаево-Черкесская республика": "Карачаево-Черкесская Республика",
+  "Удмуртская республика": "Удмуртская Республика",
+  "Чувашская республика": "Чувашская Республика",
+  "Еврейская АО": "Еврейская автономная область",
+  "Кемеровская область": "Кемеровская область - Кузбасс"
 };
+
 
 // Загружаем данные из data.json (однократно)
 (async function loadData(){
@@ -560,7 +570,8 @@ const TOPO_ALIAS = {
     const d = await dataR.json();
     const topo = await topoR.json();
     // конвертируем TopoJSON → GeoJSON features
-    const geoFeatures = topojson.feature(topo, topo.objects.russia);
+    const objKey = Object.keys(topo.objects)[0];
+    const geoFeatures = topojson.feature(topo, topo.objects[objKey]);
     // merge data по region name
     const dataMap = {};
     (d.regions || d.features || d).forEach(r => { dataMap[r.region] = r; });
@@ -750,7 +761,11 @@ try {
   FEATURES.forEach(f => {
     const g = f.geometry;
     if(!g || !g.coordinates) return;
-    if(g.type === "Polygon") g.coordinates.forEach(r => updateBounds(r));
+    if(g.type === "Polygon"){
+      g.coordinates.forEach(r => updateBounds(r));
+    } else if(g.type === "MultiPolygon"){
+      g.coordinates.forEach(poly => poly.forEach(r => updateBounds(r)));
+    }
   });
 
   const pad = 1.5;
@@ -758,35 +773,40 @@ try {
   const geoWidth  = maxLon - minLon;
   const geoHeight = maxLat - minLat;
 
-  // 2. SVG + проекция с коррекцией Меркатора (cos(lat))
-  // Без этой коррекции карта растягивается по горизонтали на северных широтах.
+  // 2. SVG + простая проекция (равноугольная, без искажений Меркатора)
   const svg = els.svg;
-  const midLat = (minLat + maxLat) / 2;
-  const cosLat = Math.cos(midLat * Math.PI / 180);
-  // Эффективная ширина в "экранных" единицах (с учётом сжатия долготы)
-  const effWidth = geoWidth * cosLat;
   const VB_W = 1000;
-  const VB_H = 1000 * (geoHeight / effWidth);
+  const VB_H = 1000 * (geoHeight / geoWidth);
   svg.attr("viewBox", `0 0 ${VB_W} ${VB_H}`);
-  const scaleX = VB_W / effWidth;
+  const scaleX = VB_W / geoWidth;
   const scaleY = VB_H / geoHeight;
 
   function project(lon, lat){
-    // Коррекция долготы на cos(lat) — компенсирует растяжение Меркатора
-    return [(lon - minLon) * cosLat * scaleX, VB_H - (lat - minLat) * scaleY];
+    return [(lon - minLon) * scaleX, VB_H - (lat - minLat) * scaleY];
   }
 
   function makePathD(geometry){
     let d = "";
-    if(!geometry || geometry.type !== "Polygon") return "";
-    geometry.coordinates.forEach(ring => {
-      if(!ring || ring.length < 3) return;
-      ring.forEach((coord, i) => {
-        if(!coord || coord.length < 2) return;
-        const [x, y] = project(coord[0], coord[1]);
-        d += (i === 0 ? "M" : "L") + x.toFixed(2) + "," + y.toFixed(2) + " ";
+    if(!geometry) return "";
+    let polys = [];
+    if(geometry.type === "Polygon"){
+      polys = [geometry.coordinates];
+    } else if(geometry.type === "MultiPolygon"){
+      polys = geometry.coordinates;
+    } else {
+      return "";
+    }
+    polys.forEach(rings => {
+      if(!rings || !rings.length) return;
+      rings.forEach(ring => {
+        if(!ring || ring.length < 3) return;
+        ring.forEach((point, i) => {
+          if(!point || point.length < 2) return;
+          const [x, y] = project(point[0], point[1]);
+          d += (i === 0 ? "M" : "L") + x.toFixed(2) + "," + y.toFixed(2) + " ";
+        });
+        d += "Z ";
       });
-      d += "Z ";
     });
     return d.trim();
   }
@@ -824,11 +844,16 @@ try {
   }
 
   FEATURES.forEach(f => {
-    if(!f.geometry || f.geometry.type !== "Polygon") return;
-    const main = f.geometry.coordinates[0];
+    if(!f.geometry) return;
+    let main;
+    if(f.geometry.type === "Polygon"){
+      main = f.geometry.coordinates[0];
+    } else if(f.geometry.type === "MultiPolygon"){
+      main = f.geometry.coordinates[0]?.[0]; // первый полигон → внешнее кольцо
+    }
     if(!main) return;
     const area = polygonArea(main);
-    if(area < 5) return;  // только крупные регионы
+    if(area < 10) return;  // только крупные регионы
     if(f.price == null) return;
     const c = getCentroid(main);
     if(!c) return;
