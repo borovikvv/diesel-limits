@@ -746,25 +746,56 @@ const els = {
 try {
   if(typeof d3 === 'undefined') throw new Error('D3.js не загрузился (проверьте интернет)');
 
-  // 1. Предобработка: сдвиг Чукотки (и других регионов с lon > 150°)
-  //    на -65° для компактности. Без этого Чукотка на 175°E оставляет
-  //    огромное пустое Тихое океан между ДВ и Чукоткой.
-  //    Сдвиг по средней долготе региона (Чукотка имеет точки 157-180°,
-  //    "все > 170" не сработает).
+  // 1. Предобработка: обработка анти-меридиана + сдвиг Чукотки.
+  //    Чукотка пересекает 180° меридиан — её точки имеют lon как +180, так и -180.
+  //    Сначала "разворачиваем" отрицательные lon в +360 (170°W → 190°E),
+  //    потом сдвигаем регионы с lon > 150 на -65° для компактности.
+  function normalizeAntimeridian(coords){
+    // Обработка анти-меридиана для Чукотки и similares.
+    // Если в кольце есть точки с lon < 0, и хотя бы одна точка с lon > 170
+    // ИЛИ все точки с lon < 0 и lat > 60 (Чукотка западнее 180°) —
+    // разворачиваем отрицательные lon в +360 (170°W → 190°E).
+    if(!coords || !coords.length) return coords;
+    const lons = coords.filter(c => c && c.length >= 2).map(c => c[0]);
+    if(!lons.length) return coords;
+    const hasPos = lons.some(lon => lon > 170);
+    const hasNeg = lons.some(lon => lon < 0);
+    const allNeg = lons.every(lon => lon < 0);
+    const lats = coords.filter(c => c && c.length >= 2).map(c => c[1]);
+    const isFarNorth = lats.length && lats.every(lat => lat > 60);
+    // Случай 1: смешанные lon (пересечение 180° меридиана) — разворачиваем neg
+    // Случай 2: все lon < 0 и это далеко на севере (Чукотка) — тоже разворачиваем
+    if(hasPos && hasNeg){
+      return coords.map(c => {
+        if(!c || c.length < 2) return c;
+        return [c[0] < 0 ? c[0] + 360 : c[0], c[1]];
+      });
+    }
+    if(allNeg && isFarNorth){
+      return coords.map(c => {
+        if(!c || c.length < 2) return c;
+        return [c[0] + 360, c[1]];
+      });
+    }
+    return coords;
+  }
   function shiftCoords(coords, threshold = 150, shift = -65){
     if(!coords || !coords.length) return coords;
+    // Сначала нормализуем анти-меридиан
+    const normalized = normalizeAntimeridian(coords);
+    // Считаем среднюю долготу после нормализации
     let sum = 0, n = 0;
-    for(const c of coords){
+    for(const c of normalized){
       if(c && c.length >= 2 && typeof c[0] === 'number'){
         sum += c[0]; n++;
       }
     }
-    if(n === 0) return coords;
+    if(n === 0) return normalized;
     const avgLon = sum / n;
     if(avgLon > threshold){
-      return coords.map(c => c && c.length >= 2 ? [c[0] + shift, c[1]] : c);
+      return normalized.map(c => c && c.length >= 2 ? [c[0] + shift, c[1]] : c);
     }
-    return coords;
+    return normalized;
   }
   function shiftGeometry(geom){
     if(!geom) return geom;
@@ -772,7 +803,12 @@ try {
       return { type: "Polygon", coordinates: geom.coordinates.map(r => shiftCoords(r)) };
     }
     if(geom.type === "MultiPolygon"){
-      return { type: "MultiPolygon", coordinates: geom.coordinates.map(poly => poly.map(r => shiftCoords(r))) };
+      // Для MultiPolygon применяем сдвиг к каждому полигону отдельно
+      // (Чукотка = 3 полигона, все должны быть сдвинуты)
+      return {
+        type: "MultiPolygon",
+        coordinates: geom.coordinates.map(poly => poly.map(r => shiftCoords(r)))
+      };
     }
     return geom;
   }
