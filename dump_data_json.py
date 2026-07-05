@@ -149,13 +149,26 @@ def calc_level(limit_text, has_source=False):
     if 'свободн' in l and 'ограничен' not in l:
         return 0 if has_source else -1
 
-    # Level 3 — числа < 40 л
-    m = re.search(r'(\d+)\s*л', l)
-    if m:
-        lim = int(m.group(1))
-        if lim < 40:
+    # Парсим лимиты: поддерживаем диапазоны "20-50 л", "20–50 л", "60/200 л"
+    # Берём МИНИМУМ из найденных чисел (минимум = самый жёсткий лимит).
+    # ВАЖНО: re.search(r'(\d+)\s*л') находит только число, стоящее НЕПОСРЕДСТВЕННО
+    # перед 'л'. В строке "20-50 л" оно найдёт только 50, пропустив 20.
+    # Поэтому сначала ищем диапазоны, потом одиночные числа.
+    nums = []
+    # 1. Диапазоны: 20-50 л, 20–50 л, 20/50 л
+    for m in re.finditer(r'(\d+)\s*[-–/]\s*(\d+)\s*л', l):
+        nums.append(int(m.group(1)))
+        nums.append(int(m.group(2)))
+    # 2. Одиночные: 60 л (исключая уже найденные диапазоны)
+    l_clean = re.sub(r'\d+\s*[-–/]\s*\d+\s*л', '', l)
+    for m in re.finditer(r'(\d+)\s*л', l_clean):
+        nums.append(int(m.group(1)))
+
+    if nums:
+        min_lim = min(nums)
+        if min_lim < 40:
             return 3
-        elif lim < 100:
+        elif min_lim < 100:
             return 2
         else:
             return 1
