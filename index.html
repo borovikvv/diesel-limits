@@ -902,20 +902,22 @@ try {
     }
     return coords;
   }
-  function shiftCoords(coords, threshold = 150, shift = -65){
+  function shiftCoords(coords, shift = -65){
+    // Сдвигаем только регионы, пересекающие 180-й меридиан (после нормализации
+    // имеют lon > 180). Это Чукотка и подобные — без сдвига они создают
+    // огромное пустое Тихое океан между ДВ и Чукоткой.
+    // НЕ сдвигаем Магаданскую/Камчатку (avg_lon ~150-170) — они на своём месте.
     if(!coords || !coords.length) return coords;
-    // Сначала нормализуем анти-меридиан
     const normalized = normalizeAntimeridian(coords);
-    // Считаем среднюю долготу после нормализации
-    let sum = 0, n = 0;
+    // Проверяем: есть ли после нормализации lon > 180 (признак пересечения меридиана)
+    let crossesMeridian = false;
     for(const c of normalized){
-      if(c && c.length >= 2 && typeof c[0] === 'number'){
-        sum += c[0]; n++;
+      if(c && c.length >= 2 && typeof c[0] === 'number' && c[0] > 180){
+        crossesMeridian = true;
+        break;
       }
     }
-    if(n === 0) return normalized;
-    const avgLon = sum / n;
-    if(avgLon > threshold){
+    if(crossesMeridian){
       return normalized.map(c => c && c.length >= 2 ? [c[0] + shift, c[1]] : c);
     }
     return normalized;
@@ -1068,13 +1070,14 @@ try {
       }
     });
 
-  // 4.5. Индикатор разрыва между ДВ и Чукоткой
-  // Чукотка сдвинута на -65° для компактности. Рисуем две параллельные
-  // пунктирные линии с подписью "≈" между ними, чтобы было видно разрыв.
+  // 4.5. Индикатор разрыва между Камчаткой и Чукоткой.
+  // Чукотка пересекает 180° меридиан, поэтому сдвинута на -65° для компактности.
+  // Камчатка (170°E) остаётся на месте. Разрыв между ними ≈ 50°.
+  // Рисуем две параллельные пунктирные линии с подписью "≈".
   (function drawBreakIndicator(){
-    const breakLat = 64;  // средняя широта Чукотки
-    const breakLonStart = 135;  // ДВ край (Магадан)
-    const breakLonEnd = 110;    // Чукотка после сдвига
+    const breakLat = 65;       // средняя широта разрыва
+    const breakLonStart = 170; // Камчатка край (восточная точка)
+    const breakLonEnd = 125;   // Чукотка после сдвига (180-65=115, плюс запас)
     const [x1, y1] = project(breakLonStart, breakLat);
     const [x2, y2] = project(breakLonEnd, breakLat);
     const dy = 18;  // расстояние между линиями
