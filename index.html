@@ -1070,43 +1070,6 @@ try {
       }
     });
 
-  // 4.5. Индикатор разрыва между Камчаткой и Чукоткой.
-  // Чукотка пересекает 180° меридиан, поэтому сдвинута на -65° для компактности.
-  // Камчатка (170°E) остаётся на месте. Разрыв между ними ≈ 50°.
-  // Рисуем две параллельные пунктирные линии с подписью "≈".
-  (function drawBreakIndicator(){
-    const breakLat = 65;       // средняя широта разрыва
-    const breakLonStart = 170; // Камчатка край (восточная точка)
-    const breakLonEnd = 125;   // Чукотка после сдвига (180-65=115, плюс запас)
-    const [x1, y1] = project(breakLonStart, breakLat);
-    const [x2, y2] = project(breakLonEnd, breakLat);
-    const dy = 18;  // расстояние между линиями
-    // Две линии
-    const lines = `M ${x1.toFixed(1)},${(y1-dy).toFixed(1)} L ${x2.toFixed(1)},${(y2-dy).toFixed(1)} M ${x1.toFixed(1)},${(y1+dy).toFixed(1)} L ${x2.toFixed(1)},${(y2+dy).toFixed(1)}`;
-    g.append("path")
-      .attr("d", lines)
-      .attr("stroke", "#64748B")
-      .attr("stroke-width", 1.5)
-      .attr("stroke-dasharray", "4,3")
-      .attr("fill", "none")
-      .attr("opacity", 0.7)
-      .style("pointer-events", "none");
-    // Подпись "≈" по центру разрыва
-    const midX = (x1 + x2) / 2;
-    const midY = (y1 + y2) / 2;
-    g.append("text")
-      .attr("x", midX)
-      .attr("y", midY)
-      .attr("text-anchor", "middle")
-      .attr("dominant-baseline", "central")
-      .attr("font-size", "14")
-      .attr("font-weight", "700")
-      .attr("fill", "#64748B")
-      .attr("font-family", "Arial, sans-serif")
-      .style("pointer-events", "none")
-      .text("≈");
-  })();
-
   // 5. Подписи цен для крупных регионов
   function polygonArea(coords){
     let area = 0;
