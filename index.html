@@ -292,13 +292,17 @@
     overflow: hidden;
     min-height: 0;  /* разрешаем сжатие */
   }
+  /* ====== Аккордеон-панели ====== */
   .panel {
     border: 1px solid #E2E8F0;
     border-radius: 8px;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;  /* разрешаем сжатие */
   }
   .panel-header {
-    padding: 8px 12px;
+    padding: 10px 12px;
     background: #F8FAFC;
     border-bottom: 1px solid #E2E8F0;
     font-size: 12px;
@@ -306,7 +310,16 @@
     color: #0F172A;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    flex-shrink: 0;  /* шапка не сжимается */
+    transition: background 0.15s;
+  }
+  .panel-header:hover { background: #F1F5F9; }
+  .panel-header:focus-visible {
+    outline: 2px solid #2563EB;
+    outline-offset: -2px;
   }
   .panel-header .icon {
     width: 18px;
@@ -318,8 +331,27 @@
     font-size: 11px;
     font-weight: 700;
     color: white;
+    flex-shrink: 0;
   }
-  .panel-body { padding: 8px 12px; }
+  .panel-header .chevron {
+    margin-left: auto;
+    font-size: 12px;
+    color: #64748B;
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+  .panel.collapsed .chevron { transform: rotate(-90deg); }
+  .panel.collapsed .panel-body { display: none; }
+
+  .panel-body {
+    padding: 8px 12px;
+    overflow-y: auto;
+    max-height: 240px;  /* независимый скролл внутри блока */
+    min-height: 0;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Раскрытая панель может занимать больше места */
+  .panel.expanded .panel-body { max-height: 400px; }
   .panel-body ul {
     list-style: none;
     font-size: 12px;
@@ -504,14 +536,14 @@
 
     <aside class="sidebar">
       <div class="panel" id="changelog-panel">
-        <div class="panel-header">
+        <div class="panel-header" role="button" tabindex="0" aria-expanded="true">
           <span class="icon" style="background:#0EA5E9">✉</span>
           Лента изменений
           <a href="https://t.me/disel_limits_update" target="_blank" rel="noopener noreferrer"
              style="margin-left:auto;font-size:10px;color:#0EA5E9;text-decoration:none">
             @disel_limits_update ↗
           </a>
-        </div>
+        <span class="chevron" aria-hidden="true">▾</span></div>
         <div class="panel-body">
           <div id="changelog-content" style="font-size:12px;color:#1E293B;line-height:1.5;white-space:pre-wrap">
             <span style="color:#64748B">загрузка…</span>
@@ -520,37 +552,37 @@
         </div>
       </div>
       <div class="panel" id="news-panel">
-        <div class="panel-header">
+        <div class="panel-header" role="button" tabindex="0" aria-expanded="true">
           <span class="icon" style="background:#8B5CF6">📰</span>
           Последние новости
-        </div>
+        <span class="chevron" aria-hidden="true">▾</span></div>
         <div class="panel-body">
           <ul id="news-list"></ul>
         </div>
       </div>
       <div class="panel" id="critical-panel">
-        <div class="panel-header">
+        <div class="panel-header" role="button" tabindex="0" aria-expanded="true">
           <span class="icon" style="background:#DC2626">!</span>
           Критические регионы
-        </div>
+        <span class="chevron" aria-hidden="true">▾</span></div>
         <div class="panel-body">
           <ul id="critical-list"></ul>
         </div>
       </div>
       <div class="panel" id="hikes-panel">
-        <div class="panel-header">
+        <div class="panel-header" role="button" tabindex="0" aria-expanded="true">
           <span class="icon" style="background:#F59E0B">↑</span>
           Рост цен за неделю
-        </div>
+        <span class="chevron" aria-hidden="true">▾</span></div>
         <div class="panel-body">
           <ul id="hikes-list"></ul>
         </div>
       </div>
       <div class="panel" id="legend-panel">
-        <div class="panel-header">
+        <div class="panel-header" role="button" tabindex="0" aria-expanded="true">
           <span class="icon" style="background:#475569">i</span>
           Градация ограничений
-        </div>
+        <span class="chevron" aria-hidden="true">▾</span></div>
         <div class="panel-body">
           <ul id="legend-list"></ul>
         </div>
@@ -797,6 +829,38 @@ const els = {
       ${esc(lv.description)}
     </li>
   `).join('');
+})();
+
+// ============================================================
+//  АККОРДЕОН: сворачивание/разворачивание панелей
+// ============================================================
+(function setupAccordion(){
+  const panels = document.querySelectorAll('.panel');
+  // По умолчанию: первые 2 панели развёрнуты, остальные свёрнуты
+  panels.forEach((panel, i) => {
+    if(i >= 2){
+      panel.classList.add('collapsed');
+      const header = panel.querySelector('.panel-header');
+      if(header) header.setAttribute('aria-expanded', 'false');
+    }
+    const header = panel.querySelector('.panel-header');
+    if(!header) return;
+    
+    function toggle(){
+      panel.classList.toggle('collapsed');
+      const expanded = !panel.classList.contains('collapsed');
+      header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    }
+    
+    header.addEventListener('click', toggle);
+    // Клавиатурная навигация: Enter/Space
+    header.addEventListener('keydown', (e) => {
+      if(e.key === 'Enter' || e.key === ' '){
+        e.preventDefault();
+        toggle();
+      }
+    });
+  });
 })();
 
 // ============================================================
