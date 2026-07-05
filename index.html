@@ -121,6 +121,46 @@
     font-family: -apple-system, "Segoe UI", "Roboto", Arial, sans-serif;
   }
 
+  /* ====== Tooltip при hover на регион ====== */
+  .map-tooltip {
+    position: fixed;
+    background: rgba(15, 23, 42, 0.96);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.12s;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    z-index: 1000;
+    line-height: 1.4;
+    max-width: 260px;
+  }
+  .map-tooltip .tt-region {
+    font-weight: 700;
+    margin-bottom: 3px;
+  }
+  .map-tooltip .tt-status {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    margin-bottom: 3px;
+  }
+  .map-tooltip .tt-price {
+    color: #86EFAC;
+    font-weight: 700;
+    font-size: 14px;
+  }
+  .map-tooltip .tt-hint {
+    color: #94A3B8;
+    font-size: 10px;
+    margin-top: 4px;
+    font-style: italic;
+  }
+
   /* ====== Карточка региона (справа) ====== */
   .region-card {
     position: absolute;
@@ -448,11 +488,12 @@
     <div id="map-wrap" role="application" aria-label="Карта регионов России с ограничениями на продажу дизельного топлива">
       <svg id="map-svg" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
 
+      <div class="map-tooltip" id="map-tooltip" role="tooltip" aria-hidden="true"></div>
       <div class="region-card" id="region-card" role="dialog" aria-label="Детали региона">
         <!-- Заполнится при клике -->
       </div>
 
-      <div class="hint" aria-hidden="true">Клик по региону — детали. Колесо — масштаб.</div>
+      <div class="hint" aria-hidden="true">Наведите на регион — цена и статус. Клик — детали. Колесо — масштаб.</div>
 
       <div class="controls" role="group" aria-label="Управление масштабом">
         <button id="zoom-in" type="button" title="Увеличить" aria-label="Увеличить">+</button>
@@ -919,6 +960,48 @@ try {
     .attr("aria-label", d => `${esc(d.region)}: ${esc((LEVEL_BY_ID[d.level]||LEVELS[0]).label)}`)
     .on("click", function(event, d){
       showRegionCard(d);
+    })
+    .on("mouseover", function(event, d){
+      const lv = LEVEL_BY_ID[d.level] || LEVELS[0];
+      const tooltip = document.getElementById('map-tooltip');
+      if(!tooltip) return;
+      let html = `<div class="tt-region">${esc(d.region)}</div>`;
+      html += `<div class="tt-status" style="background:${lv.color}">${esc(lv.label_short)}</div>`;
+      if(d.price != null){
+        html += `<div class="tt-price">${esc(d.price.toFixed(2))} руб/л</div>`;
+      }
+      html += `<div class="tt-hint">Клик — детали</div>`;
+      tooltip.innerHTML = html;
+      tooltip.style.opacity = '1';
+      tooltip.setAttribute('aria-hidden', 'false');
+      // Позиционирование
+      const tw = tooltip.offsetWidth;
+      const th = tooltip.offsetHeight;
+      let x = event.clientX + 14;
+      let y = event.clientY + 14;
+      if(x + tw > window.innerWidth - 10) x = event.clientX - tw - 14;
+      if(y + th > window.innerHeight - 10) y = event.clientY - th - 14;
+      tooltip.style.left = x + 'px';
+      tooltip.style.top = y + 'px';
+    })
+    .on("mousemove", function(event){
+      const tooltip = document.getElementById('map-tooltip');
+      if(!tooltip || tooltip.style.opacity !== '1') return;
+      const tw = tooltip.offsetWidth;
+      const th = tooltip.offsetHeight;
+      let x = event.clientX + 14;
+      let y = event.clientY + 14;
+      if(x + tw > window.innerWidth - 10) x = event.clientX - tw - 14;
+      if(y + th > window.innerHeight - 10) y = event.clientY - th - 14;
+      tooltip.style.left = x + 'px';
+      tooltip.style.top = y + 'px';
+    })
+    .on("mouseout", function(){
+      const tooltip = document.getElementById('map-tooltip');
+      if(tooltip){
+        tooltip.style.opacity = '0';
+        tooltip.setAttribute('aria-hidden', 'true');
+      }
     });
 
   // 4.5. Индикатор разрыва между ДВ и Чукоткой
@@ -972,97 +1055,12 @@ try {
     return [cx / coords.length, cy / coords.length];
   }
 
-  // Issue #6: единое поведение — цена показывается у ВСЕХ регионов.
-  // Для крупных — прямо на регионе, для мелких — вынос с указателем.
-  // Чтобы подписи не накладывались, мелкие регионы группируются по широте
-  // и подписи располагаются лесенкой.
-  const SMALL_AREA_THRESHOLD = 10;  // deg² — ниже этого региона считаем "мелким"
-  const smallRegions = [];
-  FEATURES.forEach(f => {
-    if(!f.geometry) return;
-    if(f.price == null) return;
-    let main;
-    if(f.geometry.type === "Polygon"){
-      main = f.geometry.coordinates[0];
-    } else if(f.geometry.type === "MultiPolygon"){
-      main = f.geometry.coordinates[0]?.[0];
-    }
-    if(!main) return;
-    const area = polygonArea(main);
-    const c = getCentroid(main);
-    if(!c) return;
-    const [px, py] = project(c[0], c[1]);
-
-    if(area >= SMALL_AREA_THRESHOLD){
-      // Крупный регион — подпись прямо на регионе
-      g.append("text")
-        .attr("class", "price-label")
-        .attr("x", px)
-        .attr("y", py)
-        .text(f.price.toFixed(0));
-    } else {
-      // Мелкий регион — запоминаем для выноса
-      smallRegions.push({f, px, py, area});
-    }
-  });
-
-  // Для мелких регионов: раскладываем подписи в верхней части карты лесенкой,
-  // с тонкой линией-указателем к региону.
-  if(smallRegions.length){
-    // Сортируем по X (долготе) — слева направо
-    smallRegions.sort((a, b) => a.px - b.px);
-
-    // Группируем по "полкам" — регионы с близкими X кладём на разные Y
-    const shelfHeight = 18;  // расстояние между полками
-    const minGap = 35;       // минимальное расстояние между подписями на одной полке
-    const shelves = [];      // массив массивов регионов
-    smallRegions.forEach(item => {
-      // Найдём полку, где есть место (последняя подпись дальше чем minGap)
-      let placed = false;
-      for(let s = 0; s < shelves.length; s++){
-        const last = shelves[s][shelves[s].length - 1];
-        if(item.px - last.px >= minGap){
-          shelves[s].push(item);
-          item.shelf = s;
-          placed = true;
-          break;
-        }
-      }
-      if(!placed){
-        shelves.push([item]);
-        item.shelf = shelves.length - 1;
-      }
-    });
-
-    // Размещаем подписи на полках, начиная с верхнего края карты
-    const topY = 30;  // отступ от верха
-    smallRegions.forEach(item => {
-      const labelX = item.px;
-      const labelY = topY + item.shelf * shelfHeight;
-      // Линия-указатель от подписи к региону
-      g.append("line")
-        .attr("x1", labelX)
-        .attr("y1", labelY + 4)
-        .attr("x2", item.px)
-        .attr("y2", item.py)
-        .attr("stroke", "#94A3B8")
-        .attr("stroke-width", 0.5)
-        .attr("opacity", 0.6);
-      // Точка на регионе
-      g.append("circle")
-        .attr("cx", item.px)
-        .attr("cy", item.py)
-        .attr("r", 1.5)
-        .attr("fill", "#64748B")
-        .attr("opacity", 0.8);
-      // Подпись цены
-      g.append("text")
-        .attr("class", "price-label")
-        .attr("x", labelX)
-        .attr("y", labelY)
-        .text(item.f.price.toFixed(0));
-    });
-  }
+  // Цены на карте НЕ показываются.
+  // Карта отображает только статусы ограничений (цвет).
+  // Цена доступна:
+  //   - в tooltip при наведении на регион
+  //   - в карточке при клике на регион
+  // Это даёт чистую карту без визуального шума (issue #6 — единое поведение: ни у кого).
 
   // 6. Zoom/pan
   // Подписи цен рендерятся в координатах g и не имеют собственного transform —
@@ -1076,11 +1074,6 @@ try {
       const k = t.k;
       // Тонкие границы при увеличении
       g.selectAll("path.region").attr("stroke-width", 0.6 / k);
-      // Подписи: компенсируем размер шрифта, чтобы оставались читаемыми
-      // (без этого текст увеличивается вместе с картой и становится гигантским)
-      g.selectAll("text.price-label")
-        .attr("font-size", (10 / k) + "px")
-        .attr("stroke-width", (3 / k));
     });
   svg.call(zoom);
 
