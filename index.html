@@ -75,12 +75,7 @@
   }
 
   /* ====== Основная раскладка ====== */
-  main {
-    flex: 1;
-    display: grid;
-    grid-template-columns: 1fr 320px;
-    overflow: hidden;
-  }
+  /* main определён ниже, после aside.sidebar (для issue #7) */
   #map-wrap {
     position: relative;
     background: #FFFFFF;
@@ -245,6 +240,17 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
+    min-height: 0;        /* важно для flexbox: разрешаем сжатие ниже содержимого */
+    height: 100%;          /* занимаем всю высоту main */
+    -webkit-overflow-scrolling: touch;  /* плавный скролл на iOS */
+  }
+  /* Сам main тоже должен правильно передавать высоту */
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    overflow: hidden;
+    min-height: 0;  /* разрешаем сжатие */
   }
   .panel {
     border: 1px solid #E2E8F0;
@@ -431,7 +437,7 @@
     <div class="title-block">
       <h1>Дизель-лимиты — оперативная карта для перевозчиков</h1>
       <div class="subtitle" id="subtitle" aria-live="polite">
-        Данные: 5 июля 2026 г.  ·  Средняя цена: <b>80.82 руб/л</b>  ·  Всего: 85 регионов  ·  Обновление: раз в сутки
+        Загрузка…
       </div>
     </div>
     <div class="stats" id="stats">
@@ -528,6 +534,7 @@ let PRICE_HIKES    = [];
 let CHANGELOG      = "";
 let CHANGELOG_DATE = "";
 let RECENT_NEWS    = [];
+let CURRENT_UPDATED = "";  // дата обновления данных из data.json (issue #5)
 const LEVEL_BY_ID  = Object.fromEntries(LEVELS.map(l => [l.id, l]));
 
 // Маппинг названий из topojson → названия в data.json
@@ -593,6 +600,7 @@ const TOPO_ALIAS = {
     CHANGELOG = d.changelog || "";
     CHANGELOG_DATE = d.changelog_date || "";
     RECENT_NEWS = d.recent_news || [];
+    CURRENT_UPDATED = d.updated || "";  // "05.07.2026 18:49 МСК" из data.json
     drawAll();
   }catch(e){
     console.warn("data.json not loaded:", e);
@@ -641,7 +649,7 @@ const els = {
 };
 
 // ============================================================
-//  СТАТИСТИКА В ШАПКЕ
+//  СТАТИСТИКА В ШАПКЕ + динамическая дата
 // ============================================================
 (function renderStats(){
   const counts = {};
@@ -653,6 +661,16 @@ const els = {
       <span>${esc(lv.label_short)}</span>
     </div>
   `).join('');
+
+  // Динамическое обновление subtitle: дата из data.json + средняя цена + всего регионов
+  // (issue #5: раньше дата была захардкожена в HTML, менялась через sed)
+  const prices = FEATURES.filter(f => f.price != null).map(f => f.price);
+  const avgPrice = prices.length ? (prices.reduce((a,b) => a+b, 0) / prices.length).toFixed(2) : '—';
+  const dateStr = CURRENT_UPDATED || CHANGELOG_DATE || '—';
+  const subtitle = document.getElementById('subtitle');
+  if(subtitle){
+    subtitle.innerHTML = `Данные: ${esc(dateStr)}  ·  Средняя цена: <b>${avgPrice} руб/л</b>  ·  Всего: ${FEATURES.length} регионов  ·  Обновление: раз в сутки`;
+  }
 })();
 
 // ============================================================
@@ -954,27 +972,97 @@ try {
     return [cx / coords.length, cy / coords.length];
   }
 
+  // Issue #6: единое поведение — цена показывается у ВСЕХ регионов.
+  // Для крупных — прямо на регионе, для мелких — вынос с указателем.
+  // Чтобы подписи не накладывались, мелкие регионы группируются по широте
+  // и подписи располагаются лесенкой.
+  const SMALL_AREA_THRESHOLD = 10;  // deg² — ниже этого региона считаем "мелким"
+  const smallRegions = [];
   FEATURES.forEach(f => {
     if(!f.geometry) return;
+    if(f.price == null) return;
     let main;
     if(f.geometry.type === "Polygon"){
       main = f.geometry.coordinates[0];
     } else if(f.geometry.type === "MultiPolygon"){
-      main = f.geometry.coordinates[0]?.[0]; // первый полигон → внешнее кольцо
+      main = f.geometry.coordinates[0]?.[0];
     }
     if(!main) return;
     const area = polygonArea(main);
-    if(area < 10) return;  // только крупные регионы
-    if(f.price == null) return;
     const c = getCentroid(main);
     if(!c) return;
     const [px, py] = project(c[0], c[1]);
-    g.append("text")
-      .attr("class", "price-label")
-      .attr("x", px)
-      .attr("y", py)
-      .text(f.price.toFixed(0));
+
+    if(area >= SMALL_AREA_THRESHOLD){
+      // Крупный регион — подпись прямо на регионе
+      g.append("text")
+        .attr("class", "price-label")
+        .attr("x", px)
+        .attr("y", py)
+        .text(f.price.toFixed(0));
+    } else {
+      // Мелкий регион — запоминаем для выноса
+      smallRegions.push({f, px, py, area});
+    }
   });
+
+  // Для мелких регионов: раскладываем подписи в верхней части карты лесенкой,
+  // с тонкой линией-указателем к региону.
+  if(smallRegions.length){
+    // Сортируем по X (долготе) — слева направо
+    smallRegions.sort((a, b) => a.px - b.px);
+
+    // Группируем по "полкам" — регионы с близкими X кладём на разные Y
+    const shelfHeight = 18;  // расстояние между полками
+    const minGap = 35;       // минимальное расстояние между подписями на одной полке
+    const shelves = [];      // массив массивов регионов
+    smallRegions.forEach(item => {
+      // Найдём полку, где есть место (последняя подпись дальше чем minGap)
+      let placed = false;
+      for(let s = 0; s < shelves.length; s++){
+        const last = shelves[s][shelves[s].length - 1];
+        if(item.px - last.px >= minGap){
+          shelves[s].push(item);
+          item.shelf = s;
+          placed = true;
+          break;
+        }
+      }
+      if(!placed){
+        shelves.push([item]);
+        item.shelf = shelves.length - 1;
+      }
+    });
+
+    // Размещаем подписи на полках, начиная с верхнего края карты
+    const topY = 30;  // отступ от верха
+    smallRegions.forEach(item => {
+      const labelX = item.px;
+      const labelY = topY + item.shelf * shelfHeight;
+      // Линия-указатель от подписи к региону
+      g.append("line")
+        .attr("x1", labelX)
+        .attr("y1", labelY + 4)
+        .attr("x2", item.px)
+        .attr("y2", item.py)
+        .attr("stroke", "#94A3B8")
+        .attr("stroke-width", 0.5)
+        .attr("opacity", 0.6);
+      // Точка на регионе
+      g.append("circle")
+        .attr("cx", item.px)
+        .attr("cy", item.py)
+        .attr("r", 1.5)
+        .attr("fill", "#64748B")
+        .attr("opacity", 0.8);
+      // Подпись цены
+      g.append("text")
+        .attr("class", "price-label")
+        .attr("x", labelX)
+        .attr("y", labelY)
+        .text(item.f.price.toFixed(0));
+    });
+  }
 
   // 6. Zoom/pan
   // Подписи цен рендерятся в координатах g и не имеют собственного transform —
