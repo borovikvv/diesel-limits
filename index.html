@@ -73,6 +73,71 @@
     font-weight: 700;
     color: #0F172A;
   }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    width: 100%;
+    margin-top: 8px;
+  }
+  .toolbar .search-wrap {
+    position: relative;
+    flex: 1;
+    min-width: 200px;
+    max-width: 360px;
+  }
+  .toolbar #region-search {
+    width: 100%;
+    padding: 6px 28px 6px 10px;
+    font-size: 13px;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    background: #F8FAFC;
+  }
+  .toolbar #region-search:focus {
+    outline: 2px solid #2563EB;
+    outline-offset: -1px;
+    background: white;
+  }
+  .toolbar #search-clear {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: none;
+    background: #CBD5E1;
+    color: white;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+  }
+  .toolbar .view-toggle {
+    display: inline-flex;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-left: auto;
+  }
+  .toolbar .view-toggle button {
+    padding: 6px 12px;
+    border: none;
+    background: white;
+    color: #475569;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .toolbar .view-toggle button.active {
+    background: #2563EB;
+    color: white;
+  }
+  .toolbar .view-toggle button:focus-visible {
+    outline: 2px solid #2563EB;
+    outline-offset: -2px;
+  }
 
   /* ====== Основная раскладка ====== */
   /* main определён ниже, после aside.sidebar (для issue #7) */
@@ -573,6 +638,19 @@
     <div class="stats" id="stats">
       <!-- Заполнится JS -->
     </div>
+    <div class="toolbar" role="search">
+      <div class="search-wrap">
+        <input id="region-search" type="search" placeholder="🔍 Поиск региона…"
+               aria-label="Поиск региона" autocomplete="off"
+               list="region-list" />
+        <datalist id="region-list"></datalist>
+        <button id="search-clear" type="button" aria-label="Очистить поиск" hidden>×</button>
+      </div>
+      <div id="view-toggle" class="view-toggle" role="group" aria-label="Вид данных">
+        <button id="view-map-btn" type="button" class="active" aria-pressed="true">🗺️ Карта</button>
+        <button id="view-table-btn" type="button" aria-pressed="false">📋 Таблица</button>
+      </div>
+    </div>
   </header>
   <main>
     <div id="map-wrap" role="application" aria-label="Карта регионов России с ограничениями на продажу дизельного топлива">
@@ -921,6 +999,64 @@ const els = {
     });
   });
 })();
+
+// ============================================================
+//  ПОИСК РЕГИОНА
+// ============================================================
+(function setupSearch(){
+  const input = document.getElementById('region-search');
+  const clearBtn = document.getElementById('search-clear');
+  const datalist = document.getElementById('region-list');
+  if(!input || !datalist) return;
+
+  // Заполняем datalist всеми регионами
+  datalist.innerHTML = FEATURES
+    .map(f => `<option value="${esc(f.region)}">`)
+    .join('');
+
+  function findRegion(q){
+    if(!q) return null;
+    const ql = q.toLowerCase().trim();
+    // точное совпадение优先, иначе подстрока
+    let exact = FEATURES.find(f => f.region.toLowerCase() === ql);
+    if(exact) return exact;
+    return FEATURES.find(f => f.region.toLowerCase().includes(ql)) || null;
+  }
+
+  input.addEventListener('input', () => {
+    if(clearBtn) clearBtn.hidden = !input.value;
+  });
+  if(clearBtn){
+    clearBtn.addEventListener('click', () => {
+      input.value = '';
+      clearBtn.hidden = true;
+      input.focus();
+    });
+  }
+  input.addEventListener('change', () => {
+    const f = findRegion(input.value);
+    if(f){
+      focusRegion(f);
+      input.blur();
+    }
+  });
+  input.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter'){
+      const f = findRegion(input.value);
+      if(f){
+        focusRegion(f);
+        input.blur();
+      }
+    }
+  });
+})();
+
+// focusRegion определяется в Task 7 (по мере доступности svg/zoom).
+// Заглушка, чтобы поиск работал до подключения зума:
+function focusRegion(f){
+  // Открываем карточку — этого достаточно как минимальное поведение.
+  if(typeof showRegionCard === 'function') showRegionCard(f);
+}
 
 // ============================================================
 //  КАРТА НА D3
