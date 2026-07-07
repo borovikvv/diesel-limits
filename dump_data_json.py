@@ -40,6 +40,7 @@ import re
 import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
+from spark import build_price_spark
 
 DB = "/root/diesel_limits/restrictions.db"
 OUT = "/srv/static/data.json"
@@ -232,6 +233,19 @@ def main():
     except sqlite3.OperationalError:
         pass
 
+    # История цен для спарклайнов (price_spark)
+    price_history_by_region = {}
+    try:
+        for r in db.execute(
+            "SELECT region, date, price FROM prices_history "
+            "WHERE date >= date('now','-35 days') ORDER BY date"
+        ):
+            name = normalize_region(r[0])
+            if name:
+                price_history_by_region.setdefault(name, []).append((r[1], r[2]))
+    except sqlite3.OperationalError:
+        pass  # таблицы prices_history может не быть — спарклайны будут пустыми
+
     # Последние 10 новостей (без фильтра is_current — все изменения)
     recent_news = []
     try:
@@ -289,13 +303,15 @@ def main():
                 {"network": "все сети", "limit": "нет данных", "client": "все"}
             ]
         level = calc_level(limit_text, has_source=has_source)
+        spark_rows = price_history_by_region.get(name, [])
         regions.append({
             "region": name,
             "level": level,
             "price": price,
             "limit_text": limit_text,
             "truck_limits": truck_limits,
-            "weekly_change": weekly_changes.get(name)
+            "weekly_change": weekly_changes.get(name),
+            "price_spark": build_price_spark(spark_rows)
         })
 
     # Changelog — читает из файла, который пишет publish-крон
