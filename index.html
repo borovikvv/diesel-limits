@@ -582,6 +582,62 @@
     outline: 2px solid #2563EB;
     outline-offset: 2px;
   }
+  #table-view {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    overflow: auto;
+    background: white;
+    -webkit-overflow-scrolling: touch;
+  }
+  #table-view table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  #table-view thead {
+    position: sticky;
+    top: 0;
+    background: #F1F5F9;
+    z-index: 2;
+  }
+  #table-view th {
+    padding: 8px 10px;
+    text-align: left;
+    font-weight: 700;
+    color: #1E293B;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid #CBD5E1;
+    white-space: nowrap;
+  }
+  #table-view th:focus-visible { outline: 2px solid #2563EB; outline-offset: -2px; }
+  #table-view th .sort-ind { color: #2563EB; margin-left: 4px; }
+  #table-view td {
+    padding: 7px 10px;
+    border-bottom: 1px solid #F1F5F9;
+    color: #1E293B;
+    vertical-align: top;
+  }
+  #table-view tbody tr { cursor: pointer; }
+  #table-view tbody tr:hover { background: #F8FAFC; }
+  #table-view tbody tr:focus-visible { outline: 2px solid #2563EB; outline-offset: -2px; }
+  #table-view .lvl-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    color: white;
+  }
+  #table-view .num-cell { text-align: right; font-variant-numeric: tabular-nums; }
+  #table-view .empty-cell { color: #94A3B8; }
+  #table-view .result-count {
+    padding: 6px 10px;
+    font-size: 11px;
+    color: #64748B;
+    background: #F8FAFC;
+    border-bottom: 1px solid #E2E8F0;
+  }
 
   /* ====== Подсказка ====== */
   .hint {
@@ -655,6 +711,7 @@
   <main>
     <div id="map-wrap" role="application" aria-label="Карта регионов России с ограничениями на продажу дизельного топлива">
       <svg id="map-svg" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
+      <div id="table-view" role="region" aria-label="Таблица регионов" hidden></div>
 
       <div class="map-tooltip" id="map-tooltip" role="tooltip" aria-hidden="true"></div>
       <div class="region-card" id="region-card" role="dialog" aria-label="Детали региона">
@@ -1057,6 +1114,136 @@ function focusRegion(f){
   // Открываем карточку — этого достаточно как минимальное поведение.
   if(typeof showRegionCard === 'function') showRegionCard(f);
 }
+
+// ============================================================
+//  ПЕРЕКЛЮЧАТЕЛЬ ВИДА: Карта / Таблица
+// ============================================================
+const TABLE_VIEW = {
+  sortKey: 'region',
+  sortDir: 1  // 1=asc, -1=desc
+};
+
+function renderTable(){
+  const container = document.getElementById('table-view');
+  if(!container) return;
+
+  // FEATURES может быть отфильтрован (Task 8) — учитываем через window.__filteredFeatures
+  const rows = (typeof window.__filteredFeatures !== 'undefined' && window.__filteredFeatures)
+    ? window.__filteredFeatures : FEATURES;
+
+  const sorted = [...rows].sort((a, b) => {
+    let va = a[TABLE_VIEW.sortKey], vb = b[TABLE_VIEW.sortKey];
+    if(TABLE_VIEW.sortKey === 'level'){ va = a.level; vb = b.level; }
+    if(va == null) va = (TABLE_VIEW.sortKey === 'price' ? -Infinity : '');
+    if(vb == null) vb = (TABLE_VIEW.sortKey === 'price' ? -Infinity : '');
+    if(typeof va === 'number' && typeof vb === 'number'){
+      return (va - vb) * TABLE_VIEW.sortDir;
+    }
+    return String(va).localeCompare(String(vb), 'ru') * TABLE_VIEW.sortDir;
+  });
+
+  const cols = [
+    {key: 'region',  label: 'Регион'},
+    {key: 'level',   label: 'Уровень'},
+    {key: 'price',   label: 'Цена'},
+    {key: 'limit_text', label: 'Лимит'},
+    {key: 'truck',   label: 'Грузовикам'}
+  ];
+
+  const headerHtml = cols.map(c => {
+    const isActive = TABLE_VIEW.sortKey === c.key;
+    const ind = isActive ? `<span class="sort-ind">${TABLE_VIEW.sortDir > 0 ? '▲' : '▼'}</span>` : '';
+    return `<th scope="col" data-key="${c.key}" tabindex="0">${esc(c.label)}${ind}</th>`;
+  }).join('');
+
+  const bodyHtml = sorted.map((f, i) => {
+    const lv = LEVEL_BY_ID[f.level] || LEVELS[0];
+    const priceCell = f.price != null
+      ? `<td class="num-cell">${esc(f.price.toFixed(2))}</td>`
+      : `<td class="num-cell empty-cell">—</td>`;
+    const truckTxt = (f.truck_limits || [])
+      .filter(t => t && t.network).slice(0, 2)
+      .map(t => `${esc(t.network)}: ${esc(t.limit)}`).join('; ');
+    const truckCell = truckTxt
+      ? `<td>${truckTxt}</td>`
+      : `<td class="empty-cell">нет данных</td>`;
+    return `
+      <tr tabindex="0" data-idx="${i}">
+        <td>${esc(f.region)}</td>
+        <td><span class="lvl-badge" style="background:${lv.color}">${esc(lv.label_short)}</span></td>
+        ${priceCell}
+        <td>${esc(f.limit_text || '—')}</td>
+        ${truckCell}
+      </tr>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="result-count" aria-live="polite">Показано ${sorted.length} из ${FEATURES.length} регионов</div>
+    <table>
+      <thead><tr>${headerHtml}</tr></thead>
+      <tbody>${bodyHtml}</tbody>
+    </table>
+  `;
+
+  // Сортировка по клику/Enter на заголовке
+  container.querySelectorAll('th[data-key]').forEach(th => {
+    const onActivate = () => {
+      const key = th.getAttribute('data-key');
+      if(TABLE_VIEW.sortKey === key){
+        TABLE_VIEW.sortDir *= -1;
+      } else {
+        TABLE_VIEW.sortKey = key;
+        TABLE_VIEW.sortDir = 1;
+      }
+      renderTable();
+    };
+    th.addEventListener('click', onActivate);
+    th.addEventListener('keydown', e => {
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); onActivate(); }
+    });
+  });
+
+  // Клик/Enter на строке → карточка
+  container.querySelectorAll('tbody tr').forEach(tr => {
+    const idx = parseInt(tr.getAttribute('data-idx'), 10);
+    const f = sorted[idx];
+    const open = () => showRegionCard(f);
+    tr.addEventListener('click', open);
+    tr.addEventListener('keydown', e => {
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open(); }
+    });
+  });
+}
+
+(function setupViewToggle(){
+  const mapBtn = document.getElementById('view-map-btn');
+  const tblBtn = document.getElementById('view-table-btn');
+  const tblView = document.getElementById('table-view');
+  const svgEl = document.getElementById('map-svg');
+  const controls = document.querySelector('#map-wrap .controls');
+  const hint = document.querySelector('#map-wrap .hint');
+  if(!mapBtn || !tblBtn || !tblView) return;
+
+  function setView(view){
+    const isTable = view === 'table';
+    tblView.hidden = !isTable;
+    if(svgEl) svgEl.style.visibility = isTable ? 'hidden' : 'visible';
+    if(controls) controls.style.display = isTable ? 'none' : '';
+    if(hint) hint.style.display = isTable ? 'none' : '';
+    mapBtn.classList.toggle('active', !isTable);
+    tblBtn.classList.toggle('active', isTable);
+    mapBtn.setAttribute('aria-pressed', String(!isTable));
+    tblBtn.setAttribute('aria-pressed', String(isTable));
+    if(isTable) renderTable();
+  }
+
+  mapBtn.addEventListener('click', () => setView('map'));
+  tblBtn.addEventListener('click', () => setView('table'));
+
+  // Экспорт для Task 8 (фильтры/URL hash)
+  window.__setView = setView;
+  window.__currentView = () => tblView.hidden ? 'map' : 'table';
+})();
 
 // ============================================================
 //  КАРТА НА D3
