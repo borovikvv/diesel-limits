@@ -683,6 +683,7 @@
   #table-view tbody tr { cursor: pointer; }
   #table-view tbody tr:hover { background: #F8FAFC; }
   #table-view tbody tr:focus-visible { outline: 2px solid #2563EB; outline-offset: -2px; }
+  #table-view tbody tr.search-hit { background: #FEF3C7; box-shadow: inset 3px 0 0 #F59E0B; }
   #table-view .lvl-badge {
     display: inline-block;
     padding: 2px 6px;
@@ -928,6 +929,10 @@ const TOPO_ALIAS = {
       const data = dataMap[name] || dataMap[TOPO_ALIAS[name]] || {};
       return {
         region: name,
+        // Нормализованное имя из data.json — совпадает с именем файла в
+        // /static/history/<region>.json (dump_history.py пишет по normalize_region).
+        // Используется для history-fetch; `region` (topojson-имя) — для отображения.
+        dataRegion: data.region || name,
         level: data.level != null ? data.level : -1,
         price: data.price || null,
         limit_text: data.limit_text || "Нет данных",
@@ -989,6 +994,15 @@ const els = {
   zoomOut:    document.getElementById("zoom-out"),
   zoomReset:  document.getElementById("zoom-reset"),
 };
+
+// Hoisted в scope drawAll: эти переменные/функции используются из
+// applyFilters() и focusRegion(), которые объявлены ВНЕ try-блока ниже.
+// const/function-in-block имеют блочную область видимости, поэтому
+// объявляем их здесь (в теле drawAll) и присваиваем внутри try.
+let g;       // SVG <g> для zoom/pan — присваивается в try
+let zoom;    // d3.zoom behavior — присваивается в try
+let project = null;          // функция проекции lon/lat → SVG coords
+let showRegionCard = null;   // открывает карточку региона
 
 // ============================================================
 //  СТАТИСТИКА В ШАПКЕ + динамическая дата
@@ -1183,23 +1197,45 @@ const els = {
   });
 })();
 
-// focusRegion определяется в Task 7 (по мере доступности svg/zoom).
-// Заглушка, чтобы поиск работал до подключения зума:
+// focusRegion — обработчик выбора региона из поиска.
+// В режиме «Карта»: зум к региону + открытие карточки.
+// В режиме «Таблица»: подсветка строки + скролл к ней (+ карточка).
 function focusRegion(f){
-  // Зум к региону + открытие карточки
+  const isTable = window.__currentView && window.__currentView() === 'table';
+
+  if(isTable){
+    // Подсветка и скролл к строке таблицы
+    const tbl = document.getElementById('table-view');
+    if(tbl){
+      // Снимаем прошлую подсветку
+      tbl.querySelectorAll('tr.search-hit').forEach(tr => tr.classList.remove('search-hit'));
+      const row = [...tbl.querySelectorAll('tbody tr')].find(tr => {
+        const idx = parseInt(tr.getAttribute('data-idx'), 10);
+        const rows = (typeof window.__filteredFeatures !== 'undefined' && window.__filteredFeatures) || FEATURES;
+        const fr = rows[idx];
+        return fr && (fr.region === f.region || (fr.dataRegion && fr.dataRegion === f.dataRegion));
+      });
+      if(row){
+        row.classList.add('search-hit');
+        row.scrollIntoView({behavior: 'smooth', block: 'center'});
+      }
+    }
+    if(typeof showRegionCard === 'function') showRegionCard(f);
+    return;
+  }
+
+  // Режим «Карта»: зум к региону + карточка
   const svg = d3.select("#map-svg");
   try {
-    // центроид по первой точке геометрии (приближение)
-    const g = f.geometry;
+    const geom = f.geometry;
     let coords = [];
-    if(g && g.coordinates){
-      if(g.type === "Polygon") coords = g.coordinates[0] || [];
-      else if(g.type === "MultiPolygon") coords = (g.coordinates[0] || [])[0] || [];
+    if(geom && geom.coordinates){
+      if(geom.type === "Polygon") coords = geom.coordinates[0] || [];
+      else if(geom.type === "MultiPolygon") coords = (geom.coordinates[0] || [])[0] || [];
     }
-    if(coords.length){
+    if(coords.length && typeof project === 'function' && zoom){
       const cx = coords.reduce((s,c) => s + (c[0]||0), 0) / coords.length;
       const cy = coords.reduce((s,c) => s + (c[1]||0), 0) / coords.length;
-      // проецируем через существующую функцию project (объявлена ниже в scope)
       const [px, py] = project(cx, cy);
       svg.transition().duration(500).call(
         zoom.transform,
@@ -1207,8 +1243,6 @@ function focusRegion(f){
       );
     }
   } catch(e){ console.warn("zoom to region failed", e); }
-  // Перейти в вид «Карта», если сейчас таблица
-  if(window.__setView) window.__setView('map');
   if(typeof showRegionCard === 'function') showRegionCard(f);
 }
 
@@ -1596,9 +1630,9 @@ try {
   const scaleX = VB_W / effWidth;
   const scaleY = VB_H / geoHeight;
 
-  function project(lon, lat){
+  project = function project(lon, lat){
     return [(lon - minLon) * cosLat * scaleX, VB_H - (lat - minLat) * scaleY];
-  }
+  };
 
   function makePathD(geometry){
     let d = "";
@@ -1627,7 +1661,7 @@ try {
   }
 
   // 3. Группа для zoom/pan
-  const g = svg.append("g").attr("id", "map-group");
+  g = svg.append("g").attr("id", "map-group");
 
   // 4. Рисуем регионы
   g.selectAll("path.region")
@@ -1711,7 +1745,7 @@ try {
   // Подписи цен рендерятся в координатах g и не имеют собственного transform —
   // они автоматически следуют за регионом при zoom/pan (исправление issue #2).
   // Размер шрифта компенсируем через font-size, чтобы текст не раздувался при зуме.
-  const zoom = d3.zoom()
+  zoom = d3.zoom()
     .scaleExtent([0.7, 8])
     .on("zoom", (event) => {
       const t = event.transform;
@@ -1766,7 +1800,7 @@ try {
     return m ? parseInt(m[1], 10) : null;
   }
   function classifyLimitChange(oldV, newV){
-    // Возвращает {cls, arrow}: cls ∈ {'tighten','loosen','newlim','remove','change'}, arrow — символ
+    // Возвращает {cls, arrow}: cls ∈ {'tighten','loosen','newlim','change'}, arrow — символ
     const oldN = firstLiters(oldV);
     const newN = firstLiters(newV);
     if(oldV == null && newV != null) return {cls: "newlim", arrow: "▼"};        // новое ограничение
@@ -1799,7 +1833,7 @@ try {
       `;
     }).join('');
   }
-  function showRegionCard(d){
+  showRegionCard = function showRegionCard(d){
     const lv = LEVEL_BY_ID[d.level] || LEVELS[0];
     const priceText = d.price != null
       ? `<div class="price-block"><span class="price">${esc(d.price.toFixed(2))}</span><span class="unit">руб/л</span></div>`
@@ -1878,7 +1912,7 @@ try {
       const tl = els.card.querySelector("#timeline-block");
       if(!tl) return;
       try {
-        const url = "/static/history/" + encodeURIComponent(d.region) + ".json";
+        const url = "/static/history/" + encodeURIComponent(d.dataRegion || d.region) + ".json";
         const r = await fetch(url);
         if(!r.ok) throw new Error("HTTP " + r.status);
         const h = await r.json();

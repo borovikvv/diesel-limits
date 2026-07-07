@@ -43,6 +43,47 @@ def test_collect_history_returns_region_data():
     ]
 
 
+def test_collect_history_aliased_region_raw_to_display():
+    # Крон вставляет alias-форму 'Дагестан', БД хранит её. Нормализованное имя —
+    # 'Республика Дагестан'. SQL должен идти по сырому имени, вывод — по нормализованному.
+    db = make_db()
+    db.execute(
+        "INSERT INTO prices_history(region,price,date) VALUES(?,?,?)",
+        ("Дагестан", 95.0, "2026-06-01"),
+    )
+    db.execute(
+        "INSERT INTO restrictions(region,network,source_date,limit_value,is_current) "
+        "VALUES('Дагестан','Лукойл','2026-06-02','30 л',1)"
+    )
+    out = dump_history.collect_for_region(db, "Дагестан", display_region="Республика Дагестан")
+    assert out["region"] == "Республика Дагестан"
+    assert len(out["prices"]) == 1
+    assert out["prices"][0]["price"] == 95.0
+    assert len(out["limits"]) == 1
+    assert out["limits"][0]["network"] == "Лукойл"
+
+
+def test_write_history_uses_raw_db_name_for_query_normalized_for_filename(tmp_path):
+    # Файл должен называться по нормализованному имени, но данные — из сырого.
+    db = make_db()
+    db.execute(
+        "INSERT INTO prices_history(region,price,date) VALUES(?,?,?)",
+        ("Адыгея", 76.5, "2026-06-01"),
+    )
+    db.execute(
+        "INSERT INTO restrictions(region,network,source_date,limit_value,is_current) "
+        "VALUES('Адыгея','Газпромнефть','2026-06-01','50 л',1)"
+    )
+    out_dir = tmp_path / "history"
+    dump_history.write_all(db, str(out_dir))
+    expected = urllib.parse.quote("Республика Адыгея (Адыгея)", safe="") + ".json"
+    files = [f.name for f in out_dir.iterdir()]
+    assert expected in files, f"expected {expected}, got {files}"
+    data = json.loads((out_dir / expected).read_text(encoding="utf-8"))
+    assert data["region"] == "Республика Адыгея (Адыгея)"
+    assert len(data["prices"]) == 1  # данные найдены по сырому 'Адыгея'
+
+
 def test_collect_history_empty_region():
     db = make_db()
     out = dump_history.collect_for_region(db, "Чукотский АО")

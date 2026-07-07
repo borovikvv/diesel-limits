@@ -46,6 +46,9 @@ def build_price_spark(rows, days=30, max_points=12):
     if not window:
         return []
 
+    if max_points <= 1:
+        return [window[-1][1]]
+
     if len(window) <= max_points:
         return [p for _, p in window]
 

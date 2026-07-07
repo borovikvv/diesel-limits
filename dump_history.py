@@ -19,31 +19,37 @@ DB = "/root/diesel_limits/restrictions.db"
 OUT_DIR = "/srv/static/history"
 
 
-def collect_for_region(db, region):
+def collect_for_region(db, raw_region, display_region=None):
     """Собирает объект истории одного региона из БД.
 
     db: открытое sqlite3-подключение.
-    region: нормализованное имя региона.
+    raw_region: имя региона КАК ОНО ХРАНИТСЯ в БД (используется для SQL-фильтра).
+    display_region: нормализованное имя для выходного поля region и имени файла.
+                    Если None — берётся normalize_region(raw_region).
+
     Возвращает dict, готовый для json.dump.
     """
+    display = display_region or normalize_region(raw_region)
     prices_rows = db.execute(
         "SELECT date, price FROM prices_history WHERE region=? ORDER BY date",
-        (region,),
+        (raw_region,),
     ).fetchall()
     limits_rows = db.execute(
         "SELECT source_date, network, previous_value, limit_value "
         "FROM restrictions WHERE region=? AND source_date IS NOT NULL "
         "ORDER BY source_date DESC",
-        (region,),
+        (raw_region,),
     ).fetchall()
-    return build_history(region, prices_rows, limits_rows)
+    return build_history(display, prices_rows, limits_rows)
 
 
 def write_all(db, out_dir):
     """Пишет по файлу <region>.json на каждый регион с актуальными ограничениями.
 
-    Имя файла = urllib.parse.quote(region, safe='') + '.json'.
-    Создаёт out_dir при отсутствии.
+    Имя файла = urllib.parse.quote(normalized_region, safe='') + '.json'.
+    SQL-запросы используют СЫРОЕ имя региона из БД (крон вставляет alias-формы
+    вроде 'Адыгея', 'ХМАО'); нормализация применяется только к выходному полю
+    region и имени файла. Создаёт out_dir при отсутствии.
     """
     os.makedirs(out_dir, exist_ok=True)
     regions = [
@@ -65,7 +71,8 @@ def write_all(db, out_dir):
         if not name or name in seen:
             continue
         seen.add(name)
-        data = collect_for_region(db, name)
+        # collect_for_region опрашивает БД по сырому имени, выводит по нормализованному
+        data = collect_for_region(db, raw, display_region=name)
         fname = urllib.parse.quote(name, safe="") + ".json"
         path = os.path.join(out_dir, fname)
         with open(path, "w", encoding="utf-8") as f:
