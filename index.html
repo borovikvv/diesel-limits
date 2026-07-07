@@ -245,6 +245,24 @@
     color: #B91C1C;
     font-weight: 600;
   }
+  .region-card .spark-wrap {
+    margin-top: 8px;
+  }
+  .region-card .spark-svg {
+    display: block;
+    width: 100%;
+    height: 32px;
+  }
+  .region-card .spark-line {
+    fill: none;
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+  }
+  .region-card .spark-stats {
+    font-size: 10px;
+    color: #64748B;
+    margin-top: 3px;
+  }
   .region-card .limit-text {
     font-size: 12px;
     color: #1E293B;
@@ -665,6 +683,7 @@ const TOPO_ALIAS = {
         limit_text: data.limit_text || "Нет данных",
         truck_limits: data.truck_limits || [],
         weekly_change: data.weekly_change || null,
+        price_spark: Array.isArray(data.price_spark) ? data.price_spark : [],
         geometry: f.geometry
       };
     });
@@ -1113,6 +1132,36 @@ try {
   els.zoomReset.addEventListener("click", () => svg.transition().duration(350).call(zoom.transform, d3.zoomIdentity));
 
   // 8. Карточка региона
+  // === Спарклайн цены: чистый SVG polyline ===
+  function renderSparkline(values){
+    // values: number[] (цены). Возвращает HTML-строку блока спарклайна + статистики.
+    if(!values || values.length < 2){
+      return '';  // недостаточно данных для линии
+    }
+    const W = 120, H = 28, pad = 2;
+    const min = Math.min(...values), max = Math.max(...values);
+    const range = (max - min) || 1;
+    const stepX = (W - pad*2) / (values.length - 1);
+    const pts = values.map((v, i) => {
+      const x = pad + i * stepX;
+      const y = H - pad - ((v - min) / range) * (H - pad*2);
+      return x.toFixed(1) + "," + y.toFixed(1);
+    }).join(" ");
+    // Цвет по тренду
+    const first = values[0], last = values[values.length-1];
+    let color = "#64748B";  // ровно
+    if(last - first > 0.01) color = "#EF4444";       // рост → красный
+    else if(last - first < -0.01) color = "#10B981"; // падение → зелёный
+    const avg = values.reduce((a,b) => a+b, 0) / values.length;
+    return `
+      <div class="spark-wrap">
+        <svg class="spark-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+          <polyline class="spark-line" stroke="${color}" points="${pts}"></polyline>
+        </svg>
+        <div class="spark-stats">мин ${min.toFixed(2)} · макс ${max.toFixed(2)} · сред ${avg.toFixed(2)}</div>
+      </div>
+    `;
+  }
   function showRegionCard(d){
     const lv = LEVEL_BY_ID[d.level] || LEVELS[0];
     const priceText = d.price != null
@@ -1121,6 +1170,7 @@ try {
     const changeText = d.weekly_change != null && d.weekly_change > 0
       ? `<span class="price-change">↑ +${d.weekly_change.toFixed(2)} ₽/л за неделю</span>`
       : '';
+    const sparkHtml = renderSparkline(d.price_spark);
 
     // Блок «Для грузовиков»
     let truckBlock = '';
@@ -1163,6 +1213,7 @@ try {
           <h4>Цена ДТ</h4>
           ${priceText}
           ${changeText}
+          ${sparkHtml}
         </div>
         <div class="card-section">
           <h4>Ограничения</h4>
