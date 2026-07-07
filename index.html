@@ -289,6 +289,46 @@
   }
   .region-card .truck-block .truck-row .net { color: #475569; }
   .region-card .truck-block .truck-row .lim { font-weight: 600; color: #0F172A; }
+  .region-card .timeline-block {
+    margin-top: 4px;
+  }
+  .region-card .timeline-item {
+    padding: 6px 8px;
+    border-bottom: 1px solid #F1F5F9;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .region-card .timeline-item:last-child { border-bottom: none; }
+  .region-card .timeline-item .tl-date {
+    color: #64748B;
+    font-size: 10px;
+  }
+  .region-card .timeline-item .tl-net {
+    font-weight: 600;
+    color: #1E293B;
+    margin-left: 6px;
+  }
+  .region-card .timeline-item .tl-change {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 2px;
+  }
+  .region-card .timeline-item .tl-arrow { font-weight: 700; }
+  .region-card .timeline-item.tighten .tl-arrow { color: #EF4444; }
+  .region-card .timeline-item.loosen  .tl-arrow { color: #10B981; }
+  .region-card .timeline-item.newlim  .tl-arrow { color: #F59E0B; }
+  .region-card .timeline-loading {
+    font-size: 11px;
+    color: #64748B;
+    font-style: italic;
+    padding: 6px 8px;
+  }
+  .region-card .timeline-error {
+    font-size: 11px;
+    color: #94A3B8;
+    padding: 6px 8px;
+  }
 
   /* ====== Боковая панель справа ====== */
   aside.sidebar {
@@ -1162,6 +1202,47 @@ try {
       </div>
     `;
   }
+  // === Классификация изменения лимита ===
+  function firstLiters(text){
+    // Извлекает первое число перед 'л' (минимум из диапазона). null если нет.
+    if(!text) return null;
+    const m = String(text).match(/(\d+)\s*[-–/]?\s*\d*\s*л/);
+    return m ? parseInt(m[1], 10) : null;
+  }
+  function classifyLimitChange(oldV, newV){
+    // Возвращает {cls, arrow}: cls ∈ {'tighten','loosen','newlim','remove','change'}, arrow — символ
+    const oldN = firstLiters(oldV);
+    const newN = firstLiters(newV);
+    if(oldV == null && newV != null) return {cls: "newlim", arrow: "▼"};        // новое ограничение
+    if(newV != null && /без огранич|нет огранич|свободн/i.test(newV)) return {cls: "loosen", arrow: "▲"}; // снятие
+    if(oldN != null && newN != null){
+      if(newN < oldN) return {cls: "tighten", arrow: "▼"};   // ужесточение
+      if(newN > oldN) return {cls: "loosen",  arrow: "▲"};   // послабление
+    }
+    return {cls: "change", arrow: "•"};  // неколичественное изменение
+  }
+  function renderTimeline(limits){
+    // limits: [{date,network,old,new}] отсортированы desc. Возвращает HTML.
+    if(!limits || limits.length === 0){
+      return '<div class="timeline-loading">изменений не было</div>';
+    }
+    return limits.map(it => {
+      const {cls, arrow} = classifyLimitChange(it.old, it.new);
+      const oldTxt = it.old ? esc(it.old) : '—';
+      const newTxt = it.new ? esc(it.new) : 'без ограничений';
+      return `
+        <div class="timeline-item ${cls}">
+          <span class="tl-date">${esc(it.date)}</span>
+          <span class="tl-net">${esc(it.network)}</span>
+          <div class="tl-change">
+            <span>${oldTxt}</span>
+            <span class="tl-arrow">${arrow}</span>
+            <span>${newTxt}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
   function showRegionCard(d){
     const lv = LEVEL_BY_ID[d.level] || LEVELS[0];
     const priceText = d.price != null
@@ -1220,6 +1301,12 @@ try {
           <div class="limit-text">${esc(d.limit_text)}</div>
         </div>
         ${truckBlock}
+        <div class="card-section">
+          <h4>История изменений</h4>
+          <div class="timeline-block" id="timeline-block">
+            <div class="timeline-loading">загрузка истории…</div>
+          </div>
+        </div>
       </div>
     `;
     els.card.classList.add("visible");
@@ -1229,6 +1316,22 @@ try {
     if(closeBtn){
       closeBtn.addEventListener("click", () => els.card.classList.remove("visible"));
     }
+
+    // Lazy-загрузка истории лимитов
+    (async () => {
+      const tl = els.card.querySelector("#timeline-block");
+      if(!tl) return;
+      try {
+        const url = "/static/history/" + encodeURIComponent(d.region) + ".json";
+        const r = await fetch(url);
+        if(!r.ok) throw new Error("HTTP " + r.status);
+        const h = await r.json();
+        tl.innerHTML = renderTimeline(h.limits);
+      } catch(e){
+        console.warn("history load failed for", d.region, e);
+        tl.innerHTML = '<div class="timeline-error">история недоступна</div>';
+      }
+    })();
   }
 
   // Закрытие карточки по Esc
