@@ -106,9 +106,12 @@ db.execute('''
 
 ```bash
 python3 /root/diesel_limits/dump_data_json.py
+python3 /root/diesel_limits/dump_history.py
 ```
 
-This reads the SQLite DB → produces `/srv/static/data.json` (used by the interactive map frontend) and copies `index.html` from the repo.
+`dump_data_json.py` reads the SQLite DB → produces `/srv/static/data.json` (with `price_spark` per region for sparklines) and copies `index.html` from the repo.
+
+`dump_history.py` writes `/srv/static/history/<region>.json` for each region — price history (90 days) and limit change timeline, lazy-loaded by the region card.
 
 **Step 7: Verify**
 
