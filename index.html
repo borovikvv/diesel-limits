@@ -138,6 +138,68 @@
     outline: 2px solid #2563EB;
     outline-offset: -2px;
   }
+  .filters {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    width: 100%;
+    padding-top: 6px;
+    border-top: 1px solid #F1F5F9;
+    margin-top: 4px;
+  }
+  .filters .filter-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .filters .filter-label {
+    font-size: 11px;
+    color: #64748B;
+    font-weight: 600;
+  }
+  .filters .chips {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .filters .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    border: 1px solid #CBD5E1;
+    background: white;
+    color: #475569;
+    cursor: pointer;
+    user-select: none;
+  }
+  .filters .chip.active {
+    background: #2563EB;
+    border-color: #2563EB;
+    color: white;
+  }
+  .filters .chip:focus-visible { outline: 2px solid #2563EB; outline-offset: 1px; }
+  .filters select {
+    padding: 4px 8px;
+    font-size: 11px;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    background: white;
+  }
+  .filters #filters-reset {
+    margin-left: auto;
+    padding: 4px 10px;
+    font-size: 11px;
+    border: 1px solid #CBD5E1;
+    background: white;
+    color: #475569;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .filters #filters-reset:focus-visible { outline: 2px solid #2563EB; outline-offset: 1px; }
 
   /* ====== Основная раскладка ====== */
   /* main определён ниже, после aside.sidebar (для issue #7) */
@@ -707,6 +769,19 @@
         <button id="view-table-btn" type="button" aria-pressed="false">📋 Таблица</button>
       </div>
     </div>
+    <div class="filters" id="filters-bar" role="group" aria-label="Фильтры">
+      <div class="filter-group">
+        <span class="filter-label">Уровень:</span>
+        <div id="level-chips" class="chips"></div>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Сеть АЗС:</span>
+        <select id="network-filter" aria-label="Фильтр по сети АЗС">
+          <option value="">Все сети</option>
+        </select>
+      </div>
+      <button id="filters-reset" type="button">Сбросить</button>
+    </div>
   </header>
   <main>
     <div id="map-wrap" role="application" aria-label="Карта регионов России с ограничениями на продажу дизельного топлива">
@@ -1111,7 +1186,29 @@ const els = {
 // focusRegion определяется в Task 7 (по мере доступности svg/zoom).
 // Заглушка, чтобы поиск работал до подключения зума:
 function focusRegion(f){
-  // Открываем карточку — этого достаточно как минимальное поведение.
+  // Зум к региону + открытие карточки
+  const svg = d3.select("#map-svg");
+  try {
+    // центроид по первой точке геометрии (приближение)
+    const g = f.geometry;
+    let coords = [];
+    if(g && g.coordinates){
+      if(g.type === "Polygon") coords = g.coordinates[0] || [];
+      else if(g.type === "MultiPolygon") coords = (g.coordinates[0] || [])[0] || [];
+    }
+    if(coords.length){
+      const cx = coords.reduce((s,c) => s + (c[0]||0), 0) / coords.length;
+      const cy = coords.reduce((s,c) => s + (c[1]||0), 0) / coords.length;
+      // проецируем через существующую функцию project (объявлена ниже в scope)
+      const [px, py] = project(cx, cy);
+      svg.transition().duration(500).call(
+        zoom.transform,
+        d3.zoomIdentity.translate(px * -1.5, py * -1.5).scale(2.5)
+      );
+    }
+  } catch(e){ console.warn("zoom to region failed", e); }
+  // Перейти в вид «Карта», если сейчас таблица
+  if(window.__setView) window.__setView('map');
   if(typeof showRegionCard === 'function') showRegionCard(f);
 }
 
@@ -1244,6 +1341,142 @@ function renderTable(){
   window.__setView = setView;
   window.__currentView = () => tblView.hidden ? 'map' : 'table';
 })();
+
+// ============================================================
+//  ФИЛЬТРЫ + URL HASH
+// ============================================================
+const FILTERS = { levels: new Set(), network: '' };
+
+(function setupFilters(){
+  const chipsHost = document.getElementById('level-chips');
+  const netSel = document.getElementById('network-filter');
+  const resetBtn = document.getElementById('filters-reset');
+  if(!chipsHost || !netSel) return;
+
+  // Чипсы уровней (показываем реальные уровни из LEVELS, кроме скрытых)
+  chipsHost.innerHTML = LEVELS.map(lv => `
+    <button type="button" class="chip" data-level="${lv.id}" aria-pressed="false">
+      <span class="swatch" style="width:8px;height:8px;border-radius:2px;background:${lv.color}"></span>
+      ${esc(lv.label_short)}
+    </button>
+  `).join('');
+  chipsHost.querySelectorAll('.chip').forEach(chip => {
+    const lvId = parseInt(chip.getAttribute('data-level'), 10);
+    const toggle = () => {
+      if(FILTERS.levels.has(lvId)) FILTERS.levels.delete(lvId);
+      else FILTERS.levels.add(lvId);
+      chip.classList.toggle('active', FILTERS.levels.has(lvId));
+      chip.setAttribute('aria-pressed', String(FILTERS.levels.has(lvId)));
+      applyFilters();
+    };
+    chip.addEventListener('click', toggle);
+  });
+
+  // Список сетей АЗС из truck_limits всех регионов
+  const nets = new Set();
+  FEATURES.forEach(f => (f.truck_limits || []).forEach(t => {
+    if(t && t.network && t.network !== 'все сети') nets.add(t.network);
+  }));
+  [...nets].sort((a,b) => a.localeCompare(b, 'ru')).forEach(n => {
+    const o = document.createElement('option');
+    o.value = n; o.textContent = n;
+    netSel.appendChild(o);
+  });
+  netSel.addEventListener('change', () => {
+    FILTERS.network = netSel.value;
+    applyFilters();
+  });
+
+  if(resetBtn){
+    resetBtn.addEventListener('click', () => {
+      FILTERS.levels.clear();
+      FILTERS.network = '';
+      chipsHost.querySelectorAll('.chip').forEach(c => {
+        c.classList.remove('active'); c.setAttribute('aria-pressed','false');
+      });
+      netSel.value = '';
+      const search = document.getElementById('region-search');
+      if(search){ search.value = ''; const sc = document.getElementById('search-clear'); if(sc) sc.hidden = true; }
+      applyFilters();
+    });
+  }
+})();
+
+// Восстановление состояния из URL hash вызывается в конце drawAll()
+// (после того, как `g` и пути регионов определены — иначе applyFilters падает на TDZ).
+
+function getFilteredFeatures(){
+  // Возвращает FEATURES после применения фильтров
+  return FEATURES.filter(f => {
+    if(FILTERS.levels.size > 0 && !FILTERS.levels.has(f.level)) return false;
+    if(FILTERS.network){
+      const has = (f.truck_limits || []).some(t => t && t.network === FILTERS.network);
+      if(!has) return false;
+    }
+    return true;
+  });
+}
+
+function applyFilters(){
+  const filtered = getFilteredFeatures();
+  window.__filteredFeatures = filtered;
+
+  // Карта: затемнить отфильтрованные
+  const ids = new Set(filtered.map(f => f.region));
+  g.selectAll("path.region").attr("opacity", d => ids.has(d.region) ? 1 : 0.25);
+
+  // Таблица: перерисовать
+  if(window.__currentView && window.__currentView() === 'table'){
+    renderTable();
+  }
+  saveHashState();
+}
+
+function saveHashState(){
+  const parts = [];
+  const view = window.__currentView ? window.__currentView() : 'map';
+  if(view === 'table') parts.push('view=table');
+  if(FILTERS.levels.size > 0){
+    parts.push('lvl=' + [...FILTERS.levels].sort().join(','));
+  }
+  if(FILTERS.network) parts.push('net=' + encodeURIComponent(FILTERS.network));
+  const search = document.getElementById('region-search');
+  if(search && search.value) parts.push('q=' + encodeURIComponent(search.value));
+  const hash = parts.length ? '#' + parts.join(';') : '';
+  if(location.hash !== hash){
+    history.replaceState(null, '', hash || location.pathname);
+  }
+}
+
+function loadHashState(){
+  if(!location.hash) return;
+  const params = {};
+  location.hash.slice(1).split(';').forEach(p => {
+    const [k, v] = p.split('=');
+    if(k) params[k] = v || '';
+  });
+  if(params.view === 'table' && window.__setView) window.__setView('table');
+  if(params.lvl){
+    params.lvl.split(',').forEach(s => {
+      const n = parseInt(s, 10);
+      if(!isNaN(n)){
+        FILTERS.levels.add(n);
+        const chip = document.querySelector('.chip[data-level="' + n + '"]');
+        if(chip){ chip.classList.add('active'); chip.setAttribute('aria-pressed','true'); }
+      }
+    });
+  }
+  if(params.net){
+    FILTERS.network = decodeURIComponent(params.net);
+    const netSel = document.getElementById('network-filter');
+    if(netSel) netSel.value = FILTERS.network;
+  }
+  if(params.q){
+    const search = document.getElementById('region-search');
+    if(search){ search.value = decodeURIComponent(params.q); const sc = document.getElementById('search-clear'); if(sc) sc.hidden = false; }
+  }
+  applyFilters();
+}
 
 // ============================================================
 //  КАРТА НА D3
@@ -1663,6 +1896,10 @@ try {
   });
 
   console.info(`Карта готова: ${FEATURES.length} регионов`);
+
+  // Восстановление фильтров/вида из URL hash — в конце, после отрисовки карты,
+  // чтобы applyFilters() имел доступ к `g` и path.region.
+  if(typeof loadHashState === 'function') loadHashState();
 
 } catch(err){
   console.error("Ошибка инициализации карты:", err);
