@@ -141,17 +141,19 @@ python3 /root/diesel_limits/gen_diesel_map.py
 cp /root/diesel_limits/tmp/diesel_heatmap.png /srv/static/diesel.png
 ```
 
-**Step 2: Query stats from SQLite**
+**Step 2: Query changes from SQLite** (not status — only deltas)
 
-Runs SQL queries on `/root/diesel_limits/restrictions.db`:
-- Regions with prices
-- Active restrictions (is_current=1)
-- Changes in the last 24 hours
+Runs SQL queries on `/root/diesel_limits/restrictions.db` for the last 24 hours:
+- Changed records: `previous_value IS NOT NULL AND updated_at >= datetime('now', '-1 day')`
+- New records: `previous_value IS NULL AND updated_at >= datetime('now', '-1 day')`  
+- Updated prices: `prices.updated_at >= datetime('now', '-1 day')`
 
-**Step 3: Publish to Telegram**
+**If zero changes** → the job produces `[SILENT]` — nothing is published, no file written.
+
+**Step 3: Publish to Telegram** (only if changes exist)
 
 - **Map image**: sent via curl using `TG_BOT_TOKEN_DIESEL` environment variable to chat `@disel_limits_update` (chat ID `-1004299364641`)
-- **Summary text**: sent as a separate message in Russian
+- **Summary text**: sent as a separate message in Russian. Describes what changed — new limits, removed limits, price changes. Not a full status report.
 
 **Step 4: Save summary for the site**
 
