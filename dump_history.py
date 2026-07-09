@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import urllib.parse
+from datetime import datetime
 
 # Импортируем из соседних модулей репозитория
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -82,6 +83,14 @@ def write_all(db, out_dir):
 
 def main():
     db = sqlite3.connect(DB)
+    # ponytail: create prices_history if missing, seed from prices
+    db.execute("CREATE TABLE IF NOT EXISTS prices_history (region TEXT, date TEXT, price REAL)")
+    if not db.execute("SELECT COUNT(*) FROM prices_history").fetchone()[0]:
+        today = datetime.now().strftime("%Y-%m-%d")
+        for r in db.execute("SELECT region, price FROM prices WHERE price IS NOT NULL"):
+            db.execute("INSERT OR IGNORE INTO prices_history(region,date,price) VALUES(?,?,?)", (r[0], today, float(r[1])))
+        db.commit()
+        print(f"  seeded prices_history: {db.execute('SELECT COUNT(*) FROM prices_history').fetchone()[0]} rows")
     try:
         write_all(db, OUT_DIR)
     finally:
