@@ -288,8 +288,10 @@ def main():
         fiz = [r for r in restricts if r['client'] in ('', 'физлица', 'все', None)]
         ur = [r for r in restricts if r['client'] in ('юридические лица', 'юрлица')]
         if fiz:
+            # ponytail: "без ограничений" записи — в конец, реальные лимиты — первыми
+            fiz.sort(key=lambda r: 1 if 'без ограничений' in r['limit'].lower() or 'нет лимит' in r['limit'].lower() else 0)
             parts = [f"{r['network']}: {r['limit']}" if r['network'] else r['limit']
-                     for r in fiz[:2]]
+                     for r in fiz[:3]]
             limit_text = "; ".join(parts)
         else:
             limit_text = "Нет данных"
