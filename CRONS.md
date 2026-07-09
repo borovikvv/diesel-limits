@@ -148,14 +148,17 @@ Runs SQL queries on `/root/diesel_limits/restrictions.db` for the last 24 hours:
 - New records: `previous_value IS NULL AND updated_at >= datetime('now', '-1 day')`  
 - Updated prices: `prices.updated_at >= datetime('now', '-1 day')`
 
-**If zero changes** → the job produces `[SILENT]` — nothing is published, no file written.
+**If zero changes** → only the map is published. Summary and changelog file are skipped.
 
-**Step 3: Publish to Telegram** (only if changes exist)
+**Step 3: Publish map to Telegram** (always, every day)
 
 - **Map image**: sent via curl using `TG_BOT_TOKEN_DIESEL` environment variable to chat `@disel_limits_update` (chat ID `-1004299364641`)
+
+**Step 4: Publish summary** (only if changes exist)
+
 - **Summary text**: sent as a separate message in Russian. Describes what changed — new limits, removed limits, price changes. Not a full status report.
 
-**Step 4: Save summary for the site**
+**Step 5: Save summary for the site** (only if changes exist)
 
 Writes the same summary text to `/srv/static/changelog_latest.txt`:
 
